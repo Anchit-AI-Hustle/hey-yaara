@@ -1,8 +1,10 @@
-const apiKey = "AIzaSyA_6wJREDKfPND2_kJRyV0FDx9FSGqvgWk";
+const apiKey = process.env.GEMINI_API_KEY;
 const payloadMessages = [{role: "system", content: "You are a friendly bot"}, {role: "user", content: "hello"}];
 
 async function run() {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+  if (!apiKey) throw new Error("GEMINI_API_KEY is required. See tests/manual/README.md.");
+
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -22,4 +24,7 @@ async function run() {
   console.log(response.status);
   console.log(result);
 }
-run();
+run().catch(error => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

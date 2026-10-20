@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pickGemini, pickGroq } from "../../api/_lib/models";
 
 type Fake = (url: string, init?: RequestInit) => Response | Promise<Response>;
+const isGroq = (url: string) => new URL(url).hostname === "api.groq.com";
 const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 const err = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
@@ -68,7 +69,7 @@ describe("api/chat", () => {
 
   it("falls back to Gemini, and finds a current Gemini model when the first one is gone", async () => {
     fakeFetch((url) => {
-      if (url.includes("api.groq.com")) return err(401, { error: { message: "Invalid API Key" } });
+      if (isGroq(url)) return err(401, { error: { message: "Invalid API Key" } });
       if (url.includes("/v1beta/models?")) return ok({ models: [{ name: "models/gemini-3-flash", supportedGenerationMethods: ["generateContent"] }] });
       if (url.includes("gemini-3-flash:generateContent")) return ok({ candidates: [{ content: { parts: [{ text: "Haan ji, " }, { text: "boliye!" }] } }] });
       return err(404, { error: { message: "models/gemini-2.5-flash is not found", status: "NOT_FOUND" } });
@@ -79,7 +80,7 @@ describe("api/chat", () => {
   });
 
   it("a Groq rate limit falls through to Gemini; both limited says 429", async () => {
-    fakeFetch((url) => (url.includes("api.groq.com") ? err(429, { error: "slow down" }) : ok({ candidates: [{ content: { parts: [{ text: "Ji" }] } }] })));
+    fakeFetch((url) => (isGroq(url) ? err(429, { error: "slow down" }) : ok({ candidates: [{ content: { parts: [{ text: "Ji" }] } }] })));
     let handler = (await import("../../api/chat")).default;
     expect(await (await handler(chatReq())).json()).toMatchObject({ provider: "gemini" });
     vi.resetModules();
@@ -89,7 +90,7 @@ describe("api/chat", () => {
   });
 
   it("puts the system prompt where each provider expects it", async () => {
-    const calls = fakeFetch((url) => (url.includes("api.groq.com") ? err(500, {}) : ok({ candidates: [{ content: { parts: [{ text: "Ji" }] } }] })));
+    const calls = fakeFetch((url) => (isGroq(url) ? err(500, {}) : ok({ candidates: [{ content: { parts: [{ text: "Ji" }] } }] })));
     const handler = (await import("../../api/chat")).default;
     await handler(chatReq());
     expect(calls[0].body.messages[0]).toMatchObject({ role: "system" });

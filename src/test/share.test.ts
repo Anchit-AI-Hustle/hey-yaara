@@ -20,7 +20,7 @@ describe("share message", () => {
     const long = "Bahut accha ".repeat(60);
     const msg = buildShareMessage(5, long, URL, 280);
     expect(xLength(msg)).toBeLessThanOrEqual(280);
-    expect(msg.endsWith(URL)).toBe(true);
+    expect(msg.split("\n").at(-1)).toBe(`Aap bhi try kijiye: ${URL}`);
     expect(msg).toContain("…");
   });
 

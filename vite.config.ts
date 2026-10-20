@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
+import { apiDev } from "./scripts/vite-api-dev";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -14,6 +15,7 @@ export default defineConfig(({ mode }) => ({
   },
   plugins: [
     react(),
+    apiDev(),
     VitePWA({
       registerType: "autoUpdate",
       manifest: {
@@ -39,6 +41,9 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
+        // The API must always reach the server: never answer it from the cache,
+        // and never answer it with the app's index.html.
+        navigateFallbackDenylist: [/^\/api\//],
       },
     })
   ].filter(Boolean),

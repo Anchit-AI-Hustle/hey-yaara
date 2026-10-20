@@ -13,7 +13,6 @@ import { useNavigate } from "react-router-dom";
 import { flushSync } from "react-dom";
 import { Mic, MicOff, PhoneOff, Play, Pause, ArrowLeft, X, Clock, MessageCircle } from "lucide-react";
 import { useFreeConversation } from "@/hooks/use-free-conversation";
-import { callStorage } from "@/lib/call-storage";
 import { useAuth } from "@/contexts/AuthContext";
 import { DEFAULT_FEMALE_VOICE_ID, DEFAULT_MALE_VOICE_ID } from "@/lib/voice-options";
 import VoiceOrb from "@/components/VoiceOrb";
@@ -46,7 +45,10 @@ const CallYaara = () => {
   const [connecting, setConnecting] = useState(false);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [callError, setCallError] = useState<string | null>(null);
+  const [lastDurationSec, setLastDurationSec] = useState(0);
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const transcriptsRef = useRef<TranscriptEntry[]>([]);
+  useEffect(() => { transcriptsRef.current = transcripts; }, [transcripts]);
   
    // Audio recorder hook
    const {
@@ -60,8 +62,13 @@ const CallYaara = () => {
   // Voice gender selection - CONSISTENT once selected (never changes mid-call)
   const [voiceGender, setVoiceGender] = useState<"female" | "male">(user?.gender === "male" ? "male" : "female");
   
+  // The voice chosen in the profile for each gender, else the default one.
+  const voiceFor = useCallback((gender: "female" | "male") => gender === "female"
+    ? (user?.yaaraFemaleVoiceId || DEFAULT_FEMALE_VOICE_ID)
+    : (user?.yaarMaleVoiceId || DEFAULT_MALE_VOICE_ID), [user?.yaaraFemaleVoiceId, user?.yaarMaleVoiceId]);
+
   // Store selected voice ONCE per call - NEVER recalculate mid-call
-  const selectedVoiceRef = useRef<string>(voiceGender === "female" ? DEFAULT_FEMALE_VOICE_ID : DEFAULT_MALE_VOICE_ID);
+  const selectedVoiceRef = useRef<string>(voiceFor(voiceGender));
   
   // For session - use the ref value (consistent throughout call)
   const sessionVoiceId = selectedVoiceRef.current;
@@ -81,13 +88,12 @@ const CallYaara = () => {
     if (callState !== 'idle') return;
     setVoiceGender(gender);
     // ALSO update the ref to keep them in sync
-    selectedVoiceRef.current = gender === "female" ? DEFAULT_FEMALE_VOICE_ID : DEFAULT_MALE_VOICE_ID;
-  }, [callState]);
+    selectedVoiceRef.current = voiceFor(gender);
+  }, [callState, voiceFor]);
 
-  // Helper to ensure text is only Roman English script (ASCII only)
-  const toRomanScript = (text: string): string => {
-    return text.replace(/[^\x00-\x7F]/g, '').trim();
-  };
+  // Emoji and control characters out; Hindi and every other script stay.
+  const toRomanScript = (text: string): string =>
+    text.replace(/\p{Extended_Pictographic}|\u200d|\ufe0f/gu, "").replace(/[\p{Cc}]/gu, " ").replace(/\s+/g, " ").trim();
 
   const upsert = useCallback((role: TranscriptRole, text: string, status: TranscriptStatus) => {
     // Ensure only Roman English script
@@ -108,10 +114,6 @@ const CallYaara = () => {
       return next;
     });
   }, []);
-
-  const getSessionVoiceId = () => voiceGender === "female" 
-    ? (user?.yaaraFemaleVoiceId || DEFAULT_FEMALE_VOICE_ID)
-    : (user?.yaarMaleVoiceId || DEFAULT_MALE_VOICE_ID);
 
   const { mode: voiceMode, startSession, endSession, setMuted, agentAudioRef } = useFreeConversation({
     overrides: { 
@@ -140,12 +142,12 @@ const CallYaara = () => {
 
       // Real-time save to DB
       if (isFinal && currentCallIdRef.current) {
-        const role = type === "user_speech" ? "user" : "assistant";
+        const role = type === "user_speech" ? "user" : "yaara";
         saveMessage(currentCallIdRef.current, role, text);
       }
     },
-    onError: (err: any) => {
-      setCallError(typeof err === 'string' ? err : err?.message || "Connection issue");
+    onError: (err) => {
+      setCallError(err?.message || "Connection issue");
       setConnecting(false);
     },
   });
@@ -177,58 +179,46 @@ const CallYaara = () => {
       
       await startSession();
       callStartTimeRef.current = new Date();
-    } catch (err: any) {
+    } catch (caught: unknown) {
+      const err = caught as { message?: string };
       console.error("[Call] start error:", err);
       setConnecting(false);
       setCallError(err?.message || "Could not start. Check mic permissions.");
     }
-  }, [connecting, callState, startSession, voiceGender, callError, recorderStartRecording]);
+  }, [connecting, callState, startSession, callError, recorderStartRecording]);
 
   const endCall = useCallback(async () => {
-    try { await endSession(); } catch {}
+    try { await endSession(); } catch { /* already ended */ }
     setCallState('ended');
     const endTime = new Date();
     const startTime = callStartTimeRef.current ?? endTime;
     const durationSec = Math.round((endTime.getTime() - startTime.getTime()) / 1000);
+    setLastDurationSec(durationSec);
     
     // Stop Recording and get Blob using our bulletproof hook
     const audioBlob = await recorderStopRecording();
 
-    // Run production end-call pipeline
-    if (currentCallIdRef.current && audioBlob) {
-      await endCallPipeline({
-        callId: currentCallIdRef.current,
-        audioBlob,
-        duration: durationSec,
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString()
-      });
-    } else {
-      // Fallback for local storage if pipeline fails or no audio
-      const callData = {
-        id: currentCallIdRef.current || uid(),
-        userMobile: user?.mobile || "",
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        duration: durationSec,
-        status: "completed" as const,
-        transcript: transcripts.filter(t => t.status === "final").map(t => ({
-          id: t.id,
-          role: t.role,
-          text: t.text,
-          timestamp: t.timestamp.toISOString(),
-          status: "final" as const,
-        })),
-        audioBlob: null,
-        updatedAt: endTime.toISOString(),
-      };
-      try {
-        await callStorage.saveCall(callData);
-      } catch (err) {
-        console.error("[Call] save failed:", err);
-      }
+    // Save the call with what was said, then its recording.
+    const callId = currentCallIdRef.current || uid();
+    const lines = transcriptsRef.current
+      .filter(t => t.text)
+      .map(t => ({ id: t.id, role: t.role, text: t.text, timestamp: t.timestamp.toISOString(), status: "final" as const }));
+    const result = await endCallPipeline({
+      callId,
+      audioBlob,
+      duration: durationSec,
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      transcript: lines,
+    });
+    if (!result.saved) {
+      toast({ variant: "destructive", title: "Call save nahi hui", description: result.error || "Internet check karke dobara try kijiye." });
+    } else if (result.audioTooLarge) {
+      toast({ title: "Call save ho gayi", description: "Recording 4 MB se lambi thi, isliye sirf baatein (transcript) save hui hain." });
+    } else if (audioBlob && !result.audioSaved) {
+      toast({ title: "Call save ho gayi", description: "Recording upload nahi ho payi; baatein (transcript) save hain." });
     }
-  }, [endSession, transcripts, user?.mobile, recorderStopRecording]);
+  }, [endSession, recorderStopRecording, toast]);
 
   const toggleMute = useCallback(() => {
     const next = !isMicMuted;
@@ -243,15 +233,8 @@ const CallYaara = () => {
     setCallError(null);
   }, []);
 
-  // Call duration for post-call state
-  const callDuration = useMemo(() => {
-    if (!callStartTimeRef.current) return "0:00";
-    const end = new Date();
-    const diff = Math.round((end.getTime() - callStartTimeRef.current.getTime()) / 1000);
-    const m = Math.floor(diff / 60);
-    const s = diff % 60;
-    return `${m}:${s.toString().padStart(2, "0")}`;
-  }, [callState === 'ended' ? callStartTimeRef.current : null]);
+  // Call duration for post-call state: measured once, when the call ends.
+  const callDuration = `${Math.floor(lastDurationSec / 60)}:${(lastDurationSec % 60).toString().padStart(2, "0")}`;
 
   const effectiveError = callError || recorderError;
   const isPermissionError = effectiveError?.toLowerCase().includes("permission") || effectiveError?.toLowerCase().includes("not-allowed");
@@ -266,7 +249,7 @@ const CallYaara = () => {
 
       {/* HEADER */}
       <div className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between p-6">
-        <button onClick={() => navigate("/")} className="p-3 rounded-full bg-white/5 hover:bg-white/10 transition">
+        <button type="button" aria-label="Go back" onClick={() => navigate("/")} className="p-3 rounded-full bg-white/5 hover:bg-white/10 transition">
           <ArrowLeft className="h-5 w-5" />
         </button>
         
@@ -350,8 +333,10 @@ const CallYaara = () => {
                 
                 {/* Main Mic Button */}
                 <button
+                  type="button"
                   onClick={startCall}
                   disabled={connecting}
+                  aria-label="Start call with Yaara"
                   className="group relative"
                 >
                   {/* Glow effect */}

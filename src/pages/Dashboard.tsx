@@ -12,9 +12,8 @@ import {
 } from "lucide-react";
 import WaveformPlayer from "@/lib/waveform-player";
 import { cn } from "@/lib/utils";
-import { callStorage, type CallRecord, type TranscriptLine } from "@/lib/call-storage";
-import { fetchUserCalls, deleteCall, countCallsWithoutRecordings } from "@/lib/cloud-sync";
-import { useAuth } from "@/contexts/AuthContext";
+import { type CallRecord, type TranscriptLine } from "@/lib/call-storage";
+import { fetchUserCalls, deleteCall } from "@/lib/cloud-sync";
 
 const CALLS_UPDATED_EVENT = "yaara_calls_updated";
 
@@ -65,100 +64,35 @@ const statusLabel = (status: string) => {
   return status || "Unknown";
 };
 
+/** The transcript as a UTF-8 text file (Hindi and every script kept). */
 const downloadTranscript = (call: CallRecord) => {
-  // Handle both string and array transcript formats
   const transcriptData = call.transcript;
   let lines = "";
-  
   if (Array.isArray(transcriptData)) {
-    // Legacy array format
-    lines = (transcriptData)
-      .filter(t => t.role !== "system")
+    lines = transcriptData
+      .filter(t => t.role !== "system" && t.text?.trim())
       .map(t => {
         const ts = t.timestamp ? new Date(t.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "";
         const who = t.role === "user" ? "You" : "Yaara";
-        const romanText = t.text.replace(/[^\x00-\x7F]/g, ''); // Remove non-ASCII characters
-        return ts ? `[${ts}] ${who}: ${romanText}` : `${who}: ${romanText}`;
+        return ts ? `[${ts}] ${who}: ${t.text}` : `${who}: ${t.text}`;
       })
-      .filter(line => line.trim().length > 0)
       .join("\n\n");
-  } else if (typeof transcriptData === 'string' && transcriptData) {
-    // New string format - already formatted
+  } else if (typeof transcriptData === "string") {
     lines = transcriptData;
   }
-
   if (!lines.trim()) {
-    alert("No transcript available for this call.");
+    alert("Is call ka transcript nahi hai.");
     return;
   }
-
-  // Generate a simple but valid PDF
-  try {
-    // Escape special PDF characters in the text
-    const escapedText = lines
-      .replace(/\\/g, '\\\\')  // Backslash
-      .replace(/\(/g, '\\(')   // Left parenthesis
-      .replace(/\)/g, '\\)')   // Right parenthesis
-      .replace(/\r/g, '\\r')   // Carriage return
-      .replace(/\n/g, '\\n');  // Newline
-
-    // Create a simple PDF with the text
-    const pdfContent = 
-      '%PDF-1.7\n' +
-      '1 0 obj\n' +
-      '<</Type/Catalog/Pages 2 0 R>>\n' +
-      'endobj\n' +
-      '2 0 obj\n' +
-      '<</Type/Pages/Kids[3 0 R]/Count 1>>\n' +
-      'endobj\n' +
-      '3 0 obj\n' +
-      '<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<<>>/Contents 4 0 R>>\n' +
-      'endobj\n' +
-      '4 0 obj\n' +
-      '<</Length ' + (escapedText.length + 100) + '>>\n' +
-      'stream\n' +
-      'BT\n' +
-      '/F1 12 Tf\n' +
-      '72 720 Td\n' +
-      '(' + escapedText + ') Tj\n' +
-      'ET\n' +
-      'endstream\n' +
-      'endobj\n' +
-      'xref\n' +
-      '0 5\n' +
-      '0000000000 65535 f \n' +
-      '0000000010 00000 n \n' +
-      '0000000060 00000 n \n' +
-      '0000000117 00000 n \n' +
-      '0000000210 00000 n \n' +
-      'trailer\n' +
-      '<</Size 5/Root 1 0 R>>\n' +
-      'startxref\n' +
-      '290\n' +
-      '%%EOF';
-
-    const blob = new Blob([pdfContent], { type: "application/pdf" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = `yaara-transcript-${call.id}.pdf`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (pdfError) {
-    console.error("PDF generation failed:", pdfError);
-    // Fallback to text file if PDF generation fails
-    const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href     = url;
-    a.download = `yaara-transcript-${call.id}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
+  const blob = new Blob([`${callName(call)}\n\n${lines}\n`], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `yaara-transcript-${call.id}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 };
 
 const CallCard = ({ call, onDelete }: { call: CallRecord; onDelete: () => void }) => {
@@ -170,7 +104,7 @@ const CallCard = ({ call, onDelete }: { call: CallRecord; onDelete: () => void }
   
   if (Array.isArray(transcriptData)) {
     // Legacy array format
-    msgs = transcriptData.filter((t: any) => t.role !== "system");
+    msgs = transcriptData.filter((t) => t.role !== "system");
   } else if (typeof transcriptData === 'string' && transcriptData) {
     // New string format - parse into lines
     // Format: "You: message\n\nYaara: message"
@@ -198,9 +132,9 @@ const CallCard = ({ call, onDelete }: { call: CallRecord; onDelete: () => void }
          title: "Yaara Call",
          text
        });
-     } catch (err: any) {
+     } catch (err) {
        // Ignore user cancel
-       if (err?.name === "AbortError") return;
+       if ((err as Error)?.name === "AbortError") return;
        console.error("Share failed:", err);
      }
    };
@@ -226,7 +160,7 @@ const CallCard = ({ call, onDelete }: { call: CallRecord; onDelete: () => void }
             </span>
             <span className="flex items-center gap-1">
               <MessageSquare className="h-3.5 w-3.5" />
-              {msgs.length} messages
+              {msgs.length} {msgs.length === 1 ? "message" : "messages"}
             </span>
           </div>
         </div>
@@ -271,7 +205,7 @@ const CallCard = ({ call, onDelete }: { call: CallRecord; onDelete: () => void }
               className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-1 text-xs font-bold text-amber-400 transition hover:bg-amber-500/20"
             >
               <Download className="h-3 w-3" />
-              Download PDF
+              Download
             </button>
           </div>
           <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
@@ -305,46 +239,29 @@ const CallCard = ({ call, onDelete }: { call: CallRecord; onDelete: () => void }
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
   const [calls,   setCalls]   = useState<CallRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [missingRecordingsCount, setMissingRecordingsCount] = useState(0);
-
   const loadCalls = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
-    
-    console.log("=== Dashboard loading ===");
-    
     try {
-      // Fetch only this user's calls
-      const userCalls = await fetchUserCalls();
-      console.log("Calls from cloud:", userCalls.length);
-      console.log("Calls:", userCalls.slice(0, 3));
-      setCalls(userCalls);
-      
-      // Count calls without recordings
-      const missingCount = await countCallsWithoutRecordings();
-      setMissingRecordingsCount(missingCount);
-      console.log("Calls without recordings:", missingCount);
+      setCalls(await fetchUserCalls());
     } catch (err) {
-      console.error("Dashboard error:", err);
-      setLoadError("Failed to load");
+      setLoadError(err instanceof Error ? err.message : "Calls load nahi hui.");
     } finally {
       setLoading(false);
-      console.log("=== Loading done ===");
     }
-  }, [user?.mobile]);
+  }, []);
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this call record?")) return;
+    if (!confirm("Yeh call aur iski recording hamesha ke liye delete karein?")) return;
     try {
-      await callStorage.deleteCall(id, user?.mobile);
-      loadCalls();
+      await deleteCall(id);
+      setCalls((prev) => prev.filter((c) => c.id !== id));
     } catch (err) {
-      console.error("[Dashboard] Delete failed:", err);
+      setLoadError(err instanceof Error ? err.message : "Delete nahi hua. Dobara try kijiye.");
     }
   };
 
@@ -353,6 +270,7 @@ const Dashboard = () => {
    }, [loadCalls]);
 
   const totalCalls    = calls.length;
+  const missingRecordingsCount = calls.filter(c => !c.audioPath).length;
   const totalSecs     = calls.reduce((s, c) => s + (c.duration ?? 0), 0);
   const completedCnt  = calls.filter(c => c.status === "completed").length;
   const todayCnt      = calls.filter(c => {

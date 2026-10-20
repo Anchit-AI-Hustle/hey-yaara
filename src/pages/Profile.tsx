@@ -5,12 +5,13 @@
  */
 
 import { type ChangeEvent, type FormEvent, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { 
   User, Phone, Mail, Calendar, Users, 
-  Save, ArrowLeft, LogOut, ShieldCheck, Sparkles
+  Save, ArrowLeft, LogOut, ShieldCheck, Sparkles, Star, KeyRound, Trash2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -49,7 +50,7 @@ const iconClass = "absolute left-5 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-5
 const Profile = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, updateUser, signout } = useAuth();
+  const { user, updateUser, signout, changePin, deleteAccount } = useAuth();
 
   const [formData, setFormData] = useState<ProfileFormData>(initialFormData);
   const [isSaving, setIsSaving] = useState(false);
@@ -62,7 +63,7 @@ const Profile = () => {
       setFormData({
         name: user.name || "",
         age: user.age || "",
-        gender: user.gender || "",
+        gender: (user.gender || "").toLowerCase(),
         mobile: user.mobile || "",
         email: user.email || "",
         yaaraFemaleVoiceId: user.yaaraFemaleVoiceId || DEFAULT_FEMALE_VOICE_ID,
@@ -165,8 +166,8 @@ const Profile = () => {
                 </div>
               </div>
 
-              {/* Age & Gender Row */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Age & Gender Row (stacked on narrow phones, so "Female" fits) */}
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2">
                   <label htmlFor="profile-age" className={labelClass}>Age</label>
                   <div className="relative">
@@ -180,9 +181,9 @@ const Profile = () => {
                     <Users className={iconClass} />
                     <select id="profile-gender" value={formData.gender} onChange={(e: ChangeEvent<HTMLSelectElement>) => updateField("gender", e.target.value)} autoComplete="sex" className={cn(inputClass, "appearance-none")}>
                       <option value="">Select</option>
-                      <option value="Male">Male</option>
-                      <option value="Female">Female</option>
-                      <option value="Other">Other</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other</option>
                     </select>
                   </div>
                 </div>
@@ -191,10 +192,11 @@ const Profile = () => {
               {/* Mobile (Read Only) */}
               <div className="space-y-2">
                 <label htmlFor="profile-mobile" className={labelClass}>Mobile Number</label>
-                <div className="relative opacity-50">
+                <div className="relative opacity-70">
                   <Phone className={iconClass} />
-                  <input id="profile-mobile" type="tel" value={formData.mobile} readOnly autoComplete="tel" className={cn(inputClass, "cursor-not-allowed")} />
+                  <input id="profile-mobile" type="tel" value={formData.mobile ? `+91 ${formData.mobile}` : ""} readOnly aria-describedby="profile-mobile-help" autoComplete="tel" className={cn(inputClass, "cursor-not-allowed")} />
                 </div>
+                <p id="profile-mobile-help" className="ml-1 text-sm text-slate-500">Yahi number aapka sign-in hai, isliye yeh badla nahi ja sakta.</p>
               </div>
 
               {/* Email */}
@@ -257,21 +259,105 @@ const Profile = () => {
           </div>
         </form>
 
-        {/* Sign Out */}
-        <div className="mt-8 px-4">
-           <button
-             type="button"
-             onClick={() => signout()}
-             className="flex items-center gap-3 text-slate-500 font-bold hover:text-red-400 transition-colors"
-           >
-             <LogOut className="h-5 w-5" />
-             Sign Out from Yaara
-           </button>
-        </div>
+        <AccountSection signout={signout} changePin={changePin} deleteAccount={deleteAccount} onSignedOut={() => navigate("/signin", { replace: true })} />
 
       </div>
     </div>
   );
 };
+
+const smallInput = "w-full rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-lg font-bold text-amber-50 tracking-[0.5em] tabular-nums placeholder:tracking-normal placeholder:text-slate-600 outline-none focus:border-amber-500/40 focus:ring-2 focus:ring-amber-500/20";
+const pinDigits = (v: string) => v.replace(/\D/g, "").slice(0, 4);
+
+/** Rate Yaara, change PIN, sign out, delete the account. */
+function AccountSection({ signout, changePin, deleteAccount, onSignedOut }: {
+  signout: () => Promise<void>;
+  changePin: (pin: string, newPin: string, confirmPin: string) => Promise<void>;
+  deleteAccount: (pin: string) => Promise<void>;
+  onSignedOut: () => void;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState<"pin" | "delete" | null>(null);
+  const [pin, setPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = (next: "pin" | "delete" | null) => {
+    setOpen(next); setPin(""); setNewPin(""); setConfirmPin(""); setError(null);
+  };
+
+  const submitPin = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await changePin(pin, newPin, confirmPin);
+      toast({ title: "PIN badal gaya", description: "Agli baar naye PIN se sign in kijiye." });
+      reset(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "PIN nahi badla. Dobara try kijiye.");
+    } finally { setBusy(false); }
+  };
+
+  const submitDelete = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await deleteAccount(pin);
+      toast({ title: "Account delete ho gaya", description: "Aapki saari calls aur recordings hata di gayi hain." });
+      onSignedOut();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Account delete nahi hua.");
+    } finally { setBusy(false); }
+  };
+
+  const rowClass = "flex w-full items-center gap-3 rounded-2xl px-4 py-4 text-left text-lg font-bold transition hover:bg-white/5";
+
+  return (
+    <section className="mt-8 rounded-[32px] glass-card p-4 md:p-6" aria-label="Account">
+      <Link to="/review" className={cn(rowClass, "text-amber-200")}>
+        <Star className="h-5 w-5 text-amber-400" /> Yaara ko rate kijiye
+      </Link>
+
+      <button type="button" onClick={() => reset(open === "pin" ? null : "pin")} aria-expanded={open === "pin"} className={cn(rowClass, "text-slate-200")}>
+        <KeyRound className="h-5 w-5 text-slate-400" /> PIN badaliye
+      </button>
+      {open === "pin" && (
+        <form onSubmit={submitPin} className="grid gap-3 px-4 pb-4" noValidate>
+          <label className="text-sm font-bold uppercase tracking-widest text-slate-400" htmlFor="pin-now">Abhi wala PIN</label>
+          <input id="pin-now" type="password" inputMode="numeric" autoComplete="current-password" value={pin} onChange={(e) => setPin(pinDigits(e.target.value))} placeholder="••••" className={smallInput} />
+          <label className="text-sm font-bold uppercase tracking-widest text-slate-400" htmlFor="pin-new">Naya PIN</label>
+          <input id="pin-new" type="password" inputMode="numeric" autoComplete="new-password" value={newPin} onChange={(e) => setNewPin(pinDigits(e.target.value))} placeholder="••••" className={smallInput} />
+          <label className="text-sm font-bold uppercase tracking-widest text-slate-400" htmlFor="pin-again">Naya PIN dobara</label>
+          <input id="pin-again" type="password" inputMode="numeric" autoComplete="new-password" value={confirmPin} onChange={(e) => setConfirmPin(pinDigits(e.target.value))} placeholder="••••" className={smallInput} />
+          {error && <p role="alert" className="text-base font-semibold text-red-300">{error}</p>}
+          <button type="submit" disabled={busy || pin.length !== 4 || newPin.length !== 4 || confirmPin.length !== 4} className="rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 text-lg font-black text-white disabled:opacity-50">
+            {busy ? "Badal raha hai..." : "Naya PIN rakhiye"}
+          </button>
+        </form>
+      )}
+
+      <button type="button" onClick={async () => { await signout(); onSignedOut(); }} className={cn(rowClass, "text-slate-300 hover:text-red-300")}>
+        <LogOut className="h-5 w-5" /> Sign out
+      </button>
+
+      <button type="button" onClick={() => reset(open === "delete" ? null : "delete")} aria-expanded={open === "delete"} className={cn(rowClass, "text-red-300")}>
+        <Trash2 className="h-5 w-5" /> Account delete kijiye
+      </button>
+      {open === "delete" && (
+        <form onSubmit={submitDelete} className="grid gap-3 px-4 pb-4" noValidate>
+          <p className="text-base text-slate-300">Aapka account, saari calls, recordings aur review hamesha ke liye hat jayenge. Yeh wapas nahi hoga.</p>
+          <label className="text-sm font-bold uppercase tracking-widest text-slate-400" htmlFor="pin-delete">Pakka karne ke liye apna PIN</label>
+          <input id="pin-delete" type="password" inputMode="numeric" autoComplete="current-password" value={pin} onChange={(e) => setPin(pinDigits(e.target.value))} placeholder="••••" className={smallInput} />
+          {error && <p role="alert" className="text-base font-semibold text-red-300">{error}</p>}
+          <button type="submit" disabled={busy || pin.length !== 4} className="rounded-2xl bg-red-600 px-6 py-4 text-lg font-black text-white disabled:opacity-50">
+            {busy ? "Delete ho raha hai..." : "Haan, sab delete kijiye"}
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
 
 export default Profile;

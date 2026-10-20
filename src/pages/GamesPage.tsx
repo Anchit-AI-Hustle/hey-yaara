@@ -4,7 +4,7 @@
  * Warm dark design with emerald/indigo accents and large tap targets.
  */
 
-import { ArrowLeft, Sparkles, Brain, Joystick, Star, Gamepad2 } from "lucide-react";
+import { ArrowLeft, Sparkles, Brain, Joystick, Star, Gamepad2, type LucideIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   Carousel,
@@ -34,7 +34,7 @@ const GamesSection = ({
   title: string;
   subtitle: string;
   games: GameItem[];
-  icon: any;
+  icon: LucideIcon;
   accentColor: string;
   tileClassName: string;
 }) => (

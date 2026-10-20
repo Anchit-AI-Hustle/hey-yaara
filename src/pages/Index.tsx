@@ -72,10 +72,23 @@ const smartSuggestions = [
 ];
 
 const recentActivity = [
-  { type: "music", title: "Hanuman Chalisa", time: "2 hours ago", emoji: "🙏" },
-  { type: "game", title: "Sudoku", time: "Yesterday", emoji: "🔢" },
-  { type: "talk", title: "Morning Talk", time: "Today", emoji: "🌅" },
+  // Shortcuts, not history: there is no "2 hours ago" behind them.
+  { type: "music", title: "Bhajan aur gaane", time: "Music Hub", emoji: "🙏" },
+  { type: "game", title: "Sudoku aur games", time: "Games Center", emoji: "🔢" },
+  { type: "talk", title: "Yaara se baat", time: "Talk with Yaara", emoji: "🌅" },
 ];
+
+/** The bits of the browser's speech recognition the home mic uses. */
+type HomeRecognition = {
+  lang: string;
+  interimResults: boolean;
+  onstart: (() => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
 
 const Index = () => {
   const navigate = useNavigate();
@@ -83,7 +96,7 @@ const Index = () => {
   const { user } = useAuth();
   const deviceType = useDeviceType();
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<HomeRecognition | null>(null);
   const orbSize = deviceType === "desktop" ? "xl" : "lg";
   const profilePromptShown = useRef(false);
   const hasShownAfterSignIn = useRef(false);
@@ -129,7 +142,8 @@ const Index = () => {
   }, [navigate]);
 
   const toggleVoiceMode = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const w = window as unknown as { SpeechRecognition?: new () => HomeRecognition; webkitSpeechRecognition?: new () => HomeRecognition };
+    const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SpeechRecognition) { navigate("/talk"); return; }
 
     if (isListening) {
@@ -146,7 +160,7 @@ const Index = () => {
       toast({ title: "Dobara boliye", description: "Main sun nahi paaya." });
     };
     rec.onend = () => setIsListening(false);
-    rec.onresult = (e: any) => handleVoiceResult(e.results[0][0].transcript);
+    rec.onresult = (e) => handleVoiceResult(e.results[0][0].transcript);
     
     recognitionRef.current = rec;
     rec.start();
@@ -301,7 +315,7 @@ const Index = () => {
            {/* Recent Activity Mini-Feed */}
            <section className="rounded-[32px] glass-card-premium p-8">
               <div className="mb-6 flex items-center justify-between">
-                 <h3 className="text-2xl font-black text-amber-50">Revisit</h3>
+                 <h3 className="text-2xl font-black text-amber-50">Jaldi kholiye</h3>
                  <Clock className="h-6 w-6 text-slate-500" />
               </div>
               <div className="space-y-4">
@@ -335,6 +349,13 @@ const Index = () => {
               "Yaara ke saath har pal khubsurat hai."
            </p>
            <p className="mt-2 text-slate-500 font-medium">Main hamesha aapke ek tap ki duri par hoon.</p>
+           <button
+             type="button"
+             onClick={() => navigate("/review")}
+             className="mt-6 inline-flex min-h-12 items-center gap-2 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-3 text-lg font-black text-white shadow-lg shadow-amber-500/20 transition hover:-translate-y-0.5"
+           >
+             <Star className="h-5 w-5" /> Yaara kaisi lagi? Rate kijiye
+           </button>
         </footer>
 
       </div>

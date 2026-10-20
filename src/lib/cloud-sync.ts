@@ -1,638 +1,126 @@
-import { supabase } from "@/integrations/supabase/client";
-import type { CallRecord } from "@/lib/call-storage";
+/**
+ * cloud-sync.ts - calls, transcripts and recordings, through /api/calls.
+ *
+ * Everything is stored on the server under the signed-in person's own account;
+ * the server checks the session on every request, so one person can never see
+ * or change another's calls.
+ */
 
-const CALLS_TABLE = "yaara_calls";
-const STORAGE_BUCKET = "call-recordings";
+import { api, apiFetch, ApiError } from "@/lib/api";
+import type { CallRecord, TranscriptLine } from "@/lib/call-storage";
 
-const DEMO_USER_ID = "f51fd26c-dc4e-4a0e-b7d6-75e47639c159";
+/** Recordings above this are not uploaded (the server's limit is the same). */
+export const MAX_AUDIO_BYTES = 4 * 1024 * 1024;
 
-async function getUserId(): Promise<string> {
-  return DEMO_USER_ID;
-}
+type ServerCall = {
+  id: string;
+  startTime: string;
+  endTime: string | null;
+  duration: number;
+  status: string;
+  transcript: TranscriptLine[];
+  hasAudio: boolean;
+  updatedAt: string;
+};
 
+const toRecord = (c: ServerCall): CallRecord => ({
+  id: c.id,
+  startTime: c.startTime,
+  endTime: c.endTime || c.startTime,
+  duration: c.duration,
+  status: c.status,
+  transcript: c.transcript || [],
+  audioBlob: null,
+  // The players fetch the recording by call id.
+  audioPath: c.hasAudio ? c.id : null,
+  updatedAt: c.updatedAt,
+});
+
+/** This person's calls, newest first. Throws when the server cannot be reached. */
 export const fetchUserCalls = async (): Promise<CallRecord[]> => {
-  try {
-    const userId = await getUserId();
-    if (!userId) {
-      console.error("[CloudSync] fetchUserCalls: No user ID available");
-      return [];
-    }
-    console.log("[CloudSync] Fetching calls for userId:", userId);
-    
-    const { data, error } = await supabase
-      .from(CALLS_TABLE)
-      .select("id,start_time,end_time,duration,status,audio_path,transcript,updated_at")
-      .eq("user_id", userId)
-      .order("start_time", { ascending: false });
-    
-    if (error) {
-      console.error("[CloudSync] fetchUserCalls error:", error);
-      // Re-throw to allow caller to handle if needed, but we'll return empty array for UI stability
-      return [];
-    }
-    
-    const mapped = (data || []).map((row: any) => ({
-      id: row.id,
-      userMobile: userId, // We already know the user ID from the query
-      startTime: row.start_time,
-      endTime: row.end_time,
-      duration: row.duration,
-      status: row.status,
-      transcript: row.transcript || [],
-      audioBlob: null,
-      audioPath: row.audio_path || null,
-      updatedAt: row.updated_at || new Date().toISOString(),
-    }));
-    
-    // Debug: log first call's audio_path and transcript
-    if (mapped.length > 0) {
-      console.log("[CloudSync] First call audio_path:", mapped[0].audioPath);
-      console.log("[CloudSync] First call transcript length:", mapped[0].transcript?.length || 0);
-    }
-    
-    console.log("[CloudSync] Calls fetched:", mapped.length);
-    return mapped;
-  } catch (err) {
-    console.error("[CloudSync] fetchUserCalls exception:", err);
-    return [];
-  }
+  const r = await api<{ calls: ServerCall[] }>("/api/calls");
+  return r.calls.map(toRecord);
 };
 
-export const getAudioSignedUrl = async (path: string): Promise<string | null> => {
+export const deleteCall = async (callId: string): Promise<boolean> => {
+  const r = await api<{ deleted: boolean }>(`/api/calls?id=${encodeURIComponent(callId)}`, { method: "DELETE" });
+  return r.deleted;
+};
+
+/** A playable URL for a call's recording (an object URL; revoke it when done). */
+export const getAudioUrl = async (callId: string): Promise<string | null> => {
+  if (!callId) return null;
   try {
-    if (!path) return null;
-    
-    const { data, error } = await supabase
-      .storage
-      .from(STORAGE_BUCKET)
-      .createSignedUrl(path, 60 * 60);
-    
-    if (error) {
-      console.error("[CloudSync] getAudioSignedUrl error:", error);
-      return null;
-    }
-    
-    return data?.signedUrl || null;
-  } catch (err) {
-    console.error("[CloudSync] getAudioSignedUrl exception:", err);
+    const res = await apiFetch(`/api/calls?id=${encodeURIComponent(callId)}&audio=1`);
+    if (!res.ok) return null;
+    return URL.createObjectURL(await res.blob());
+  } catch {
     return null;
   }
 };
 
-export const fetchCallAudio = async (callId: string): Promise<string | null> => {
+// Emoji and control characters are dropped; Hindi and every other script stay.
+// (This used to strip everything that was not ASCII, which deleted whole Hindi
+// sentences from transcripts.)
+const cleanText = (text: string) =>
+  text.replace(/\p{Extended_Pictographic}|\u200d|\ufe0f/gu, "").replace(/[\p{Cc}]/gu, " ").replace(/\s+/g, " ").trim();
+
+/** One line said during a call, saved as it happens. Never throws. */
+export const saveMessage = async (callId: string, role: "user" | "yaara", text: string): Promise<void> => {
+  const clean = cleanText(text || "");
+  if (!callId || !clean) return;
   try {
-    const { data, error } = await supabase
-      .from(CALLS_TABLE)
-      .select("audio_path")
-      .eq("id", callId)
-      .single();
-    
-    if (error || !data?.audio_path) {
-      console.log("[CloudSync] No audio_path found for call:", callId);
-      return null;
-    }
-    
-    return getAudioSignedUrl(data.audio_path);
+    await api("/api/calls?action=message", { body: { callId, role, text: clean } });
   } catch (err) {
-    console.error("[CloudSync] fetchCallAudio exception:", err);
-    return null;
+    console.warn("[CloudSync] saveMessage failed:", (err as Error).message);
   }
 };
 
-export const uploadAudio = async (callId: string, audioBlob: Blob): Promise<string | null> => {
-  try {
-    const userId = await getUserId();
-    if (!userId) {
-      console.error("[CloudSync] uploadAudio: No userId!");
-      return null;
-    }
-    const path = `${userId}/${Date.now()}.webm`;
-    
-    console.log("[CloudSync] 📤 Starting audio upload to path:", path);
-    console.log("[CloudSync] 📤 Audio blob size:", audioBlob.size, "bytes");
-    console.log("[CloudSync] 📤 Call ID for update:", callId);
-    
-    const { data, error } = await supabase
-      .storage
-      .from(STORAGE_BUCKET)
-      .upload(path, audioBlob, {
-        upsert: true,
-        contentType: "audio/webm",
-      });
-    
-    if (error) {
-      console.error("[CloudSync] ❌ uploadAudio storage error:", error.message, error);
-      // Try with different content type as fallback
-      if (error.message?.includes("content-type")) {
-        console.log("[CloudSync] Retry upload with different content type...");
-        const { data: retryData, error: retryError } = await supabase
-          .storage
-          .from(STORAGE_BUCKET)
-          .upload(path, audioBlob, { upsert: true });
-        
-        if (retryError) {
-          console.error("[CloudSync] ❌ Retry also failed:", retryError);
-          return null;
-        }
-        console.log("[CloudSync] ✅ Retry upload succeeded, path:", path);
-      } else {
-        return null;
-      }
-    } else {
-      console.log("[CloudSync] ✅ Storage upload succeeded, path:", path || data?.path);
-    }
-    
-    // CRITICAL: Now update the call record with the audio_path
-    console.log("[CloudSync] 💾 Updating call record with audio_path:", path);
-    console.log("[CloudSync] 💾 Using callId:", callId);
-    
-    const { error: updateError } = await supabase
-      .from(CALLS_TABLE)
-      .update({ audio_path: path })
-      .eq("id", callId);
-    
-    if (updateError) {
-      console.error("[CloudSync] ❌ Failed to update audio_path:", updateError.message, updateError);
-    } else {
-      console.log("[CloudSync] ✅ audio_path updated successfully in DB");
-    }
-    
-    return path;
-  } catch (err) {
-    console.error("[CloudSync] uploadAudio exception:", err);
-    return null;
-  }
-};
+export type EndCallResult = { saved: boolean; audioSaved: boolean; audioTooLarge: boolean; error?: string };
 
-export const insertCall = async (callData: any) => {
-  try {
-    const userId = await getUserId();
-    const { data, error } = await supabase
-      .from(CALLS_TABLE)
-      .insert([
-        {
-          ...callData,
-          user_id: userId,
-        },
-      ])
-      .select();
-    
-    if (error) {
-      console.error("[CloudSync] insertCall error:", error);
-      return null;
-    }
-    return data;
-  } catch (err) {
-    console.error("[CloudSync] insertCall exception:", err);
-    return null;
-  }
-};
-
-export const deleteCall = async (callId: string) => {
-  try {
-    const userId = await getUserId();
-    const { error } = await supabase
-      .from(CALLS_TABLE)
-      .delete()
-      .eq("id", callId)
-      .eq("user_id", userId);
-    
-    if (error) {
-      console.error("[CloudSync] deleteCall error:", error);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("[CloudSync] deleteCall exception:", err);
-    return false;
-  }
-};
-
-export const isCloudSyncAvailable = () => {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  const available = Boolean(url && key);
-  console.log("[CloudSync] Checking availability:", { 
-    url: url || "NOT_SET", 
-    key: key ? "set" : "NOT_SET",
-    available 
-  });
-  return available;
-};
-
-export const normalizeMobileKey = (mobile?: string | null) =>
-  mobile?.replace(/\D/g, "").trim() ?? "";
-
-export const fetchRemoteProfile = async (mobile: string) => {
-  return null;
-};
-
-export const fetchAndMergeProfilesByName = async (name: string) => {
-  return [];
-};
-
-export const upsertRemoteProfile = async (profile: any) => {
-  try {
-    if (!profile?.mobile) {
-      console.error("[CloudSync] upsertRemoteProfile error: mobile is required");
-      return null;
-    }
-
-    const normalizedMobile = profile.mobile.replace(/\D/g, "");
-
-    const { data, error } = await supabase
-      .from(CALLS_TABLE.replace("yaara_calls", "yaara_profiles"))
-      .upsert({
-        mobile: normalizedMobile,
-        name: profile.name || "",
-        age: profile.age || null,
-        gender: profile.gender || null,
-        email: profile.email || null,
-        updated_at: new Date().toISOString(),
-      })
-      .select();
-
-    if (error) {
-      console.error("[CloudSync] upsertRemoteProfile error:", error);
-      return null;
-    }
-
-    console.log("[CloudSync] Profile upserted successfully:", data);
-    return data;
-  } catch (err) {
-    console.error("[CloudSync] upsertRemoteProfile exception:", err);
-    return null;
-  }
-};
-
-export const fetchAllProfiles = async () => {
-  return [];
-};
-
-export const findMobilesByName = async (name: string): Promise<string[]> => {
-  return [];
-};
-
-export const upsertRemoteCall = async (call: any) => {
-  try {
-    const userId = await getUserId();
-    const { data, error } = await supabase
-      .from(CALLS_TABLE)
-      .upsert({
-        id: call.id,
-        user_id: userId,
-        // user_mobile removed - using user_id only
-        start_time: call.startTime,
-        end_time: call.endTime,
-        duration: call.duration ?? 0,
-        status: call.status || 'completed',
-        transcript: call.transcript || [],
-        audio_path: call.audioPath || null,
-        updated_at: call.updatedAt || new Date().toISOString(),
-      }, { onConflict: ['id'] })
-      .select();
-
-    if (error) {
-      console.error("[CloudSync] upsertRemoteCall error:", error);
-      return null;
-    }
-
-    console.log("[CloudSync] Call upserted successfully:", data);
-    return data;
-  } catch (err) {
-    console.error("[CloudSync] upsertRemoteCall exception:", err);
-    return null;
-  }
-};
-
-export const deleteRemoteCall = async (callId: string) => {
-  return false;
-};
-
-export const countCallsWithoutRecordings = async (): Promise<number> => {
-  try {
-    const userId = await getUserId();
-    const { data, error, count } = await supabase
-      .from(CALLS_TABLE)
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", userId)
-      .or("audio_path.is.null,audio_path.eq.''");
-      
-    if (error) {
-      console.error("[CloudSync] countCallsWithoutRecordings error:", error);
-      return 0;
-    }
-    
-    return count || 0;
-  } catch (err) {
-    console.error("[CloudSync] countCallsWithoutRecordings exception:", err);
-    return 0;
-  }
-};
-
-export const fetchRemoteCalls = async (mobile: string) => {
-  return [];
-};
-
-export const fetchAllCallsFromAllUsers = async () => {
-  return [];
-};
-
-// STEP 5: FIX MESSAGE INSERT - Save EVERY message during call
-export const saveMessage = async (callId: string, role: string, text: string) => {
-  try {
-    if (!callId || !text) {
-      console.warn("[CloudSync] saveMessage: Missing callId or text");
-      return;
-    }
-    // Ensure text is only Roman English script
-    const romanText = toRomanScript(text || '');
-    if (!romanText) {
-      console.warn("[CloudSync] saveMessage: No Roman text to save");
-      return;
-    }
-    console.log("[CloudSync] 📝 Saving message:", role, romanText.substring(0, 30));
-    const { error } = await supabase
-      .from("yaara_messages")
-      .insert({
-        call_id: callId,
-        role,
-        text: romanText,
-      });
-    if (error) {
-      console.error("[CloudSync] ❌ saveMessage error:", error.message);
-      // Retry once
-      console.log("[CloudSync] 🔄 Retrying message save...");
-      const retry = await supabase
-        .from("yaara_messages")
-        .insert({
-          call_id: callId,
-          role,
-          text: romanText,
-        });
-      if (retry.error) {
-        console.error("[CloudSync] ❌ Retry also failed:", retry.error);
-      } else {
-        console.log("[CloudSync] ✅ Message saved on retry");
-      }
-    } else {
-      console.log("[CloudSync] ✅ Message saved successfully");
-    }
-  } catch (err) {
-    console.error("[CloudSync] saveMessage exception:", err);
-  }
-};
-
-export const transcribeAudio = async (audioBlob: Blob): Promise<string | null> => {
-  try {
-    // In a real production app, this would call an API endpoint (e.g., /api/transcribe)
-    // that uses OpenAI Whisper. For now, we simulate it.
-    console.log("[CloudSync] Transcribing audio via AI...");
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return "This is a simulated AI transcription of the audio recording.";
-  } catch (err) {
-    console.error("[CloudSync] transcribeAudio error:", err);
-    return null;
-  }
-};
-
-// Helper to ensure text is only Roman English script (ASCII)
-const toRomanScript = (text: string): string => {
-  // Keep only basic ASCII characters (letters, numbers, punctuation, spaces)
-  // Remove all non-ASCII characters including Hindi, emojis, special symbols
-  return text.replace(/[^\x00-\x7F]/g, '').trim();
-};
-
-export const buildFinalTranscript = async (callId: string, audioBlob: Blob) => {
-  try {
-    // 1. Get live messages
-    const { data: msgs, error: msgError } = await supabase
-      .from("yaara_messages")
-      .select("*")
-      .eq("call_id", callId)
-      .order("created_at");
-
-    if (msgError) throw msgError;
-
-    // Filter to Roman script only
-    const chatTranscript = msgs
-      ?.map((m: any) => {
-        const romanText = toRomanScript(m.text || '');
-        const roleLabel = m.role === "user" ? "You" : "Yaara";
-        return romanText ? `${roleLabel}: ${romanText}` : '';
-      })
-      .filter(t => t.length > 0)
-      .join("\n\n") || "";
-
-    // 2. Get AI transcript and filter to Roman script
-    const aiTranscriptRaw = await transcribeAudio(audioBlob);
-    const aiTranscript = aiTranscriptRaw ? toRomanScript(aiTranscriptRaw) : null;
-
-    // 3. Choose best (Prefer AI if it's substantial, otherwise fallback to chat)
-    const finalTranscript = aiTranscript && aiTranscript.length > 20 
-      ? aiTranscript 
-      : chatTranscript;
-
-    // Ensure final transcript is also Roman script
-    const safeFinalTranscript = finalTranscript ? toRomanScript(finalTranscript) : "";
-
-    console.log("[CloudSync] Transcript built (Roman script):", safeFinalTranscript.length, "chars");
-
-    return {
-      finalTranscript: safeFinalTranscript,
-      chatTranscript: chatTranscript,
-      aiTranscript: aiTranscript,
-    };
-  } catch (err) {
-    console.error("[CloudSync] buildFinalTranscript error:", err);
-    return { finalTranscript: null, chatTranscript: null, aiTranscript: null };
-  }
-};
-
-export const finalizeCall = async ({
-  callId,
-  audioPath,
-  transcriptData,
-  duration,
-  startTime,
-  endTime,
-  userId,
-}: {
-  callId: string;
-  audioPath: string;
-  transcriptData: {
-    finalTranscript: string | null;
-    chatTranscript: string | null;
-    aiTranscript: string | null;
-  };
-  duration: number;
-  startTime: string;
-  endTime: string;
-  userId: string;
-}) => {
-  try {
-    // Build the update object - only update if we have values
-    const updateData: any = {
-      user_id: userId,
-      duration: duration,
-      start_time: startTime,
-      end_time: endTime,
-      status: "completed",
-      updated_at: new Date().toISOString(),
-    };
-    
-    // Only include audio_path if it's not null/undefined
-    if (audioPath) {
-      updateData.audio_path = audioPath;
-      console.log("[CloudSync] finalizeCall: Setting audio_path:", audioPath);
-    } else {
-      console.log("[CloudSync] finalizeCall: audioPath is null, not updating");
-    }
-    
-    // Only include transcript if we have it
-    if (transcriptData.finalTranscript) {
-      updateData.transcript = transcriptData.finalTranscript;
-      updateData.transcript_chat = transcriptData.chatTranscript || '';
-      updateData.transcript_ai = transcriptData.aiTranscript || '';
-      console.log("[CloudSync] finalizeCall: Setting transcript, length:", transcriptData.finalTranscript.length);
-    } else {
-      console.log("[CloudSync] finalizeCall: No transcript to save");
-    }
-    
-    const { error, data } = await supabase
-      .from(CALLS_TABLE)
-      .update(updateData)
-      .eq("id", callId)
-      .select();
-    
-    if (error) {
-      console.error("[CloudSync] finalizeCall ERROR:", error.message, error);
-      // Try insert as fallback
-      console.log("[CloudSync] Trying insert as fallback...");
-      const { error: insertError } = await supabase
-        .from(CALLS_TABLE)
-        .insert({
-          ...updateData,
-          id: callId,
-        });
-      if (insertError) {
-        console.error("[CloudSync] Insert fallback also failed:", insertError);
-      } else {
-        console.log("[CloudSync] Insert fallback succeeded");
-      }
-    } else {
-      console.log("[CloudSync] finalizeCall: Call updated successfully, data:", data);
-    }
-  } catch (err) {
-    console.error("[CloudSync] finalizeCall exception:", err);
-  }
-};
-
+/**
+ * At the end of a call: save it (with the transcript shown on screen, or the
+ * lines saved live when that is empty), then upload the recording.
+ */
 export const endCallPipeline = async ({
-  callId,
-  audioBlob,
-  duration,
-  startTime,
-  endTime,
+  callId, audioBlob, duration, startTime, endTime, transcript = [], status = "completed",
 }: {
   callId: string;
-  audioBlob: Blob | null | undefined;
+  audioBlob?: Blob | null;
   duration: number;
   startTime: string;
   endTime: string;
-}) => {
+  transcript?: TranscriptLine[];
+  status?: "completed" | "failed";
+}): Promise<EndCallResult> => {
+  const result: EndCallResult = { saved: false, audioSaved: false, audioTooLarge: false };
   try {
-    const userId = await getUserId();
-    if (!userId) throw new Error("User not authenticated");
-
-    // NULL GUARDS - safety first
-    if (!callId) {
-      console.error("[CloudSync] ❌ No callId provided");
-      return;
-    }
-    if (!audioBlob) {
-      console.error("[CloudSync] ❌ No audioBlob - cannot process call");
-      return;
-    }
-    if (audioBlob.size === 0) {
-      console.error("[CloudSync] ❌ Empty audio blob");
-      return;
-    }
-
-    console.log("[CloudSync] 🔧 End call pipeline started for callId:", callId);
-    console.log("[CloudSync] 🔧 User ID:", userId);
-    console.log("[CloudSync] 🔧 Audio blob size:", audioBlob.size, "bytes");
-    console.log("[CloudSync] 🔧 Audio blob type:", audioBlob.type);
-
-    // First, create a placeholder call so it's visible in history immediately
-    console.log("[CloudSync] 📝 Creating call record...");
-    const { error: insertError } = await supabase
-      .from(CALLS_TABLE)
-      .insert({
-        id: callId,
-        user_id: userId,
-        start_time: startTime,
-        end_time: endTime,
-        duration: duration,
-        status: 'processing',
-        audio_path: null,
-        transcript: null,
-        updated_at: new Date().toISOString(),
-      });
-    
-    if (insertError) {
-      console.error("[CloudSync] ❌ Failed to create call record:", insertError);
-      // Continue anyway - we might still be able to upload audio
-    } else {
-      console.log("[CloudSync] ✅ Call record created (placeholder)");
-    }
-
-    // 1. Upload audio
-    console.log("[CloudSync] 📤 Uploading audio to storage...");
-    const audioPath = await uploadAudio(callId, audioBlob);
-    if (!audioPath) {
-      console.error("[CloudSync] ❌ Audio upload failed - no path returned");
-      // Don't throw - we still have the placeholder call
-    } else {
-      console.log("[CloudSync] ✅ Audio uploaded successfully, path:", audioPath);
-    }
-
-    // 2. Build transcript
-    console.log("[CloudSync] 📝 Building transcript...");
-    const transcriptData = await buildFinalTranscript(callId, audioBlob);
-    console.log("[CloudSync] ✅ Transcript built, length:", transcriptData.finalTranscript?.length || 0);
-    console.log("[CloudSync] Transcript preview:", transcriptData.finalTranscript?.substring(0, 100));
-
-    // 3. Finalize call record (Upsert to ensure it exists)
-    console.log("[CloudSync] 💾 Saving call record to database...");
-    await finalizeCall({
-      callId,
-      audioPath: audioPath || null,
-      transcriptData,
-      duration,
-      startTime,
-      endTime,
-      userId,
+    await api("/api/calls?action=save", {
+      body: {
+        id: callId, startTime, endTime, duration, status,
+        transcript: transcript.map((l) => ({ ...l, text: cleanText(l.text) })).filter((l) => l.text),
+      },
     });
-    console.log("[CloudSync] ✅ Call record saved successfully");
-    
-    // VERIFY: Immediately check what was saved
-    console.log("[CloudSync] 🔍 Verifying saved data...");
-    const { data: verifyData } = await supabase
-      .from(CALLS_TABLE)
-      .select("id, audio_path, transcript, status")
-      .eq("id", callId)
-      .single();
-    console.log("[CloudSync] 🔍 Verified saved:", verifyData);
-
-    console.log("[CloudSync] ✅ Call fully processed and saved");
+    result.saved = true;
   } catch (err) {
-    console.error("[CloudSync] ❌ End call pipeline failed:", err);
-    // Also log the specific error details
-    if (err instanceof Error) {
-      console.error("[CloudSync] 🔧 Error message:", err.message);
-      console.error("[CloudSync] 🔧 Error stack:", err.stack);
-    }
-    throw err; // Re-throw so callers can handle it if needed
+    result.error = err instanceof ApiError ? err.message : "Call save nahi hui.";
+    return result;
   }
+  if (!audioBlob || audioBlob.size === 0) return result;
+  if (audioBlob.size > MAX_AUDIO_BYTES) {
+    result.audioTooLarge = true;
+    return result;
+  }
+  try {
+    const res = await apiFetch(`/api/calls?id=${encodeURIComponent(callId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": audioBlob.type || "audio/webm" },
+      body: audioBlob,
+    });
+    result.audioSaved = res.ok;
+    if (res.status === 413) result.audioTooLarge = true;
+  } catch (err) {
+    console.warn("[CloudSync] recording upload failed:", (err as Error).message);
+  }
+  return result;
 };

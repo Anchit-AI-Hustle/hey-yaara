@@ -13,6 +13,7 @@ import NotFound from "./pages/NotFound";
 import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import Profile from "./pages/Profile";
+import ReviewPage from "./pages/ReviewPage";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
 const queryClient = new QueryClient();
@@ -43,6 +44,7 @@ const App = () => (
                 <Route path="/calls" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
                 <Route path="/music" element={<MusicPage />} />
                 <Route path="/games" element={<GamesPage />} />
+                <Route path="/review" element={<ReviewPage />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </div>

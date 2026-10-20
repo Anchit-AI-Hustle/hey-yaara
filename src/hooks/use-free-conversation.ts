@@ -26,7 +26,17 @@ interface UseFreeConversationOptions {
   onTranscript?: (role: TranscriptRole, text: string, status: TranscriptStatus) => void;
   onModeChange?: (data: { mode: ConversationMode }) => void;
   onVadScore?: (score: number) => void;
-  onError?: (err: any) => void;
+  onError?: (err: { message?: string } | Error) => void;
+}
+
+declare global {
+  interface Window { YARA_DEBUG_LOG?: string[] }
+}
+
+/** A short trail for debugging on a phone (window.YARA_DEBUG_LOG). Kept to the last 100 lines. */
+function debugLog(line: string) {
+  if (typeof window === "undefined") return;
+  window.YARA_DEBUG_LOG = [...(window.YARA_DEBUG_LOG || []).slice(-99), line];
 }
 
 type BrowserSpeechRecognition = {
@@ -143,7 +153,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
   optionsRef.current = options;
 
   const modeRef = useRef<ConversationMode>("idle");
-  const recRef = useRef<any>(null);
+  const recRef = useRef<BrowserSpeechRecognition | null>(null);
   const sessionActiveRef = useRef(false);
   const historyRef = useRef<{ role: string; content: string }[]>([]);
   const isMutedRef = useRef(false);
@@ -230,7 +240,8 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
     try {
       rec.start();
       recognitionRestartAttemptsRef.current = 0; // Reset backoff on success
-    } catch (e: any) {
+    } catch (err: unknown) {
+      const e = err as { message?: string };
       // "already started" errors are fine; other errors need backoff
       if (e?.message && !e.message.includes("already started")) {
         recognitionRestartAttemptsRef.current++;
@@ -250,11 +261,11 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
   }, []);
 
   // ─── AI Proxy Bridge ──────────────────────────────────────────────────────
-  const callLLM = useCallback(async (messages: any[]) => {
+  const callLLM = useCallback(async (messages: { role: string; content: string }[]) => {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
     try {
-      if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "📡 AI Bridge: Sending..."];
+      debugLog("📡 AI Bridge: Sending...");
       const resp = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -262,22 +273,23 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
         signal: controller.signal,
       });
 
-      if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), `🛰️ HTTP Status: ${resp.status}`];
+      debugLog(`🛰️ HTTP Status: ${resp.status}`);
 
       // RESILIENT PARSING: Try parsing even if header is wonky
       const data = await resp.json().catch(() => null);
       if (data) {
         if (data.text) {
-          if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "✅ AI Response OK"];
+          debugLog("✅ AI Response OK");
           return data.text;
         }
         if (data.error) throw new Error(`${data.error}`);
       }
       
       throw new Error(`Data Format Error. (Status: ${resp.status})`);
-    } catch (err: any) {
+    } catch (caught: unknown) {
+      const err = caught as { name?: string; message?: string };
       console.error("[AI] Bridge Error:", err);
-      if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), `❌ Bridge Fail: ${err.message}`];
+      debugLog(`❌ Bridge Fail: ${err.message}`);
       if (err?.name === "AbortError") {
         throw new Error("AI response timed out");
       }
@@ -289,6 +301,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
 
   // ─── API-Based Speech Synthesis with Retry + Consistent Fallback ─────────
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsApiOffRef = useRef(false);
 
   const speak = useCallback(async (text: string) => {
     return new Promise<void>((resolve) => {
@@ -328,10 +341,13 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
         let ttsSuccess = false;
         let apiAttemptsFailed = 0;
         try {
-          for (let attempt = 0; attempt <= TTS_MAX_RETRIES; attempt++) {
+          // Once the server has said its voice service is unavailable (no key,
+          // quota used up), go straight to the phone's voice for this session
+          // instead of paying for retries on every sentence.
+          for (let attempt = 0; attempt <= TTS_MAX_RETRIES && !ttsApiOffRef.current; attempt++) {
             try {
               if (attempt > 0) {
-                if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), `🔄 TTS Retry ${attempt}/${TTS_MAX_RETRIES}...`];
+                debugLog(`🔄 TTS Retry ${attempt}/${TTS_MAX_RETRIES}...`);
                 await new Promise(r => setTimeout(r, TTS_RETRY_DELAY_MS));
               }
 
@@ -343,6 +359,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
 
               if (!resp.ok) {
                 const errBody = await resp.text().catch(() => "");
+                if (/"fallback"\s*:\s*true/.test(errBody) && resp.status !== 429) ttsApiOffRef.current = true;
                 throw new Error(`TTS HTTP ${resp.status}: ${errBody.slice(0, 100)}`);
               }
 
@@ -383,7 +400,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
               }
 
               ttsSuccess = true;
-              if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "🔊 TTS Playing (ElevenLabs)"];
+              debugLog("🔊 TTS Playing (ElevenLabs)");
               break;
             } catch (err) {
               console.warn(`[TTS] Attempt ${attempt + 1} failed:`, err);
@@ -394,9 +411,9 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
           // If API failed (apiAttemptsFailed > 0) OR if we're out of retries, use browser TTS IMMEDIATELY
           if (!ttsSuccess) {
             console.warn(`[TTS] API TTS failed (${apiAttemptsFailed} attempts), switching to Browser TTS`);
-            if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "🔊 Using Browser TTS (primary fallback)"];
+            debugLog("🔊 Using Browser TTS (primary fallback)");
             console.warn("[TTS] All API attempts failed, using Browser Fallback");
-            if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "⚠️ Browser TTS Fallback"];
+            debugLog("⚠️ Browser TTS Fallback");
 
             try {
               window.speechSynthesis.cancel();
@@ -428,13 +445,6 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
               console.error("[TTS] Browser fallback also failed:", fallbackErr);
               finalize();
             }
-          } else if (!ttsSuccess) {
-            try {
-              optionsRef.current.onError?.({ message: "Selected voice service is unavailable right now." });
-            } catch (e) {
-              console.error("[TTS] onError failed:", e);
-            }
-            finalize();
           }
         } catch (fatal) {
           console.error("[TTS] Fatal error in speak():", fatal);
@@ -503,6 +513,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
       }
       
       // FIXED: Only strip control characters, NOT non-ASCII (preserves Hindi/Hinglish)
+      // eslint-disable-next-line no-control-regex -- removing control characters is the point
       finalReply = finalReply.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "").trim();
       // Strip bot name prefixes
       finalReply = finalReply.replace(/^(Yaara|Yaar|Agent|Assistant|Model|Bot):\s*/i, "");
@@ -531,7 +542,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
     } catch (err: unknown) {
       console.error("[Chat] Interaction failed:", err);
       const errMsg = err instanceof Error ? err.message : String(err);
-      if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), `❌ ERROR: ${errMsg}`];
+      debugLog(`❌ ERROR: ${errMsg}`);
       optionsRef.current.onError?.(err instanceof Error ? err : { message: errMsg });
       emit("listening");
       // Restart mic after error
@@ -667,11 +678,11 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
     startRecognition();
 
     // TRIGGER INITIAL GREETING
-    if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "🚀 Session Starting..."];
+    debugLog("🚀 Session Starting...");
     
     setTimeout(() => {
       if (sessionActiveRef.current) {
-        if (window) (window as any).YARA_DEBUG_LOG = [...((window as any).YARA_DEBUG_LOG || []), "📡 Requesting Greeting..."];
+        debugLog("📡 Requesting Greeting...");
         void handleUserSpeech({
           systemInstruction: "The conversation has just started. Greet the user warmly, introduce yourself as Yaara, and keep it brief, natural, and reassuring in Roman English (Hinglish).",
           shouldStoreUserText: false,

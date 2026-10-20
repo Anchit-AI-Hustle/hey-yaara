@@ -1,45 +1,22 @@
 /**
  * api/chat.ts
  *
- * Secure Proxy supporting both GROQ (Llama) and Gemini.
- * Uses whichever API key is configured.
- *
- * v4.0 FIXES:
- * - Supports both Groq and Gemini backends
- * - Auto-detects available API key
- * - Better error handling
+ * Server-side proxy to Groq, with Gemini as the fallback. The keys stay on the
+ * server. Model names are not hard-coded to one: see api/_lib/models.ts.
  */
 
+import { GEMINI_PREFERRED, GROQ_PREFERRED, isModelGone, pickGemini, pickGroq } from "./_lib/models.js";
+
 export const config = {
-  runtime: 'edge',
+  runtime: "edge",
 };
 
-export default async function (req: Request) {
-  const jsonHeaders = { "Content-Type": "application/json" };
-  
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), { 
-      status: 405, 
-      headers: jsonHeaders 
-    });
-  }
+type Msg = { role: string; content: string };
 
-  const groqKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
-  // Also support VITE_LLM_API_KEY (common convention)
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.VITE_LLM_API_KEY;
+const jsonHeaders = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: jsonHeaders });
 
-  try {
-    const body = await req.json();
-    const messages = body.messages || [];
-    
-    const systemMessages = messages.filter((m: any) => m.role === "system");
-    const conversationMessages = messages.filter((m: any) => m.role !== "system");
-    
-    const baseSystemPrompt = systemMessages.map((m: any) => m.content).join("\n\n") 
-      || body.systemInstruction 
-      || "You are Yaara, a friendly voice agent.";
-
-    const FINAL_INSTRUCTION = `
+const FINAL_INSTRUCTION = `
 CRITICAL OUTPUT RULES:
 - Write in Roman English script (A-Z alphabet). You may use Hindi words in Roman script (Hinglish) like "kya haal hai", "bahut accha".
 - Keep responses to 1-2 short sentences. Be concise and conversational.
@@ -48,119 +25,148 @@ CRITICAL OUTPUT RULES:
 - If you are unsure about something, ask a brief clarification question.
 - NEVER hallucinate or make up facts.`;
 
-    if (groqKey) {
-      try {
-        const groqResp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${groqKey}`
-          },
-          body: JSON.stringify({
-            model: "llama-3.3-70b-versatile",
-            messages: [
-              { role: "system", content: baseSystemPrompt + FINAL_INSTRUCTION },
-              ...conversationMessages.slice(-10)
-            ],
-            temperature: 0.7,
-            max_tokens: 200,
-            top_p: 0.9,
-            frequency_penalty: 0.3,
-          }),
-        });
+// Remembered per edge instance, so the model list is fetched at most once.
+let groqModel: string | null = null;
+let geminiModel: string | null = null;
 
-        if (groqResp.ok) {
-          const groqData = await groqResp.json();
-          const text = groqData?.choices?.[0]?.message?.content;
-          if (text) return new Response(JSON.stringify({ text }), { 
-            status: 200, 
-            headers: jsonHeaders 
-          });
-        }
-        
-        const errStatus = groqResp.status;
-        const errText = await groqResp.text();
-        
-        if (errStatus === 429) {
-          return new Response(JSON.stringify({ error: "Rate limit reached. Please wait.", details: errText }), { 
-            status: 429, 
-            headers: jsonHeaders 
-          });
-        }
-        
-        console.error("[API] Groq error:", errStatus, errText);
-      } catch (groqErr) {
-        console.error("[API] Groq call failed:", groqErr);
+async function groqModels(key: string): Promise<string[]> {
+  const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${key}` } });
+  if (!r.ok) return [];
+  const d = (await r.json()) as { data?: { id: string }[] };
+  return (d.data || []).map((m) => m.id);
+}
+
+async function geminiModels(key: string) {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${key}`);
+  if (!r.ok) return [];
+  const d = (await r.json()) as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+  return d.models || [];
+}
+
+function callGroq(key: string, model: string, system: string, convo: Msg[]) {
+  return fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "system", content: system }, ...convo.slice(-10)],
+      temperature: 0.7,
+      max_tokens: 200,
+      top_p: 0.9,
+    }),
+  });
+}
+
+function callGemini(key: string, model: string, system: string, convo: Msg[]) {
+  return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: convo.slice(-10).map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      })),
+      generationConfig: { temperature: 0.7, maxOutputTokens: 300, topP: 0.9 },
+    }),
+  });
+}
+
+type Provider = {
+  name: string;
+  key: string | undefined;
+  call: (key: string, model: string, system: string, convo: Msg[]) => Promise<Response>;
+  first: () => string;
+  pick: (key: string) => Promise<string | null>;
+  remember: (model: string) => void;
+  text: (d: unknown) => string;
+};
+
+/** One provider: its last good model, or the preferred one; on "model gone", ask it. */
+async function tryProvider(p: Provider, system: string, convo: Msg[]): Promise<Response | "rate-limited" | null> {
+  if (!p.key) return null;
+  try {
+    let model = p.first();
+    let r = await p.call(p.key, model, system, convo);
+    if (!r.ok) {
+      const err = await r.text();
+      if (r.status === 429) return "rate-limited";
+      if (!isModelGone(r.status, err)) {
+        console.error(`[API] ${p.name} error:`, r.status, err.slice(0, 300));
+        return null;
+      }
+      const picked = await p.pick(p.key);
+      if (!picked || picked === model) {
+        console.error(`[API] ${p.name}: no chat model available`, err.slice(0, 200));
+        return null;
+      }
+      model = picked;
+      r = await p.call(p.key, model, system, convo);
+      if (!r.ok) {
+        console.error(`[API] ${p.name} error:`, r.status, (await r.text()).slice(0, 300));
+        return null;
       }
     }
-
-    if (geminiKey) {
-      try {
-        const geminiMessages = [
-          { role: "user", parts: [{ text: baseSystemPrompt + FINAL_INSTRUCTION }] },
-          ...conversationMessages.slice(-10).map((m: any) => ({
-            role: m.role === "assistant" ? "model" : "user",
-            parts: [{ text: m.content }]
-          }))
-        ];
-
-        const geminiResp = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: geminiMessages,
-              generationConfig: {
-                temperature: 0.7,
-                maxOutputTokens: 200,
-                topP: 0.9,
-                topK: 40,
-              }
-            }),
-          }
-        );
-
-        if (geminiResp.ok) {
-          const geminiData = await geminiResp.json();
-          const text = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text) return new Response(JSON.stringify({ text }), { 
-            status: 200, 
-            headers: jsonHeaders 
-          });
-        }
-        
-        const errStatus = geminiResp.status;
-        const errText = await geminiResp.text();
-        console.error("[API] Gemini error:", errStatus, errText);
-        
-        if (errStatus === 429) {
-          return new Response(JSON.stringify({ error: "Gemini rate limit reached.", details: errText }), { 
-            status: 429, 
-            headers: jsonHeaders 
-          });
-        }
-      } catch (geminiErr) {
-        console.error("[API] Gemini call failed:", geminiErr);
-      }
-    }
-
-    if (!groqKey && !geminiKey) {
-      return new Response(JSON.stringify({ error: "No AI API key configured." }), { 
-        status: 500, 
-        headers: jsonHeaders 
-      });
-    }
-
-    return new Response(JSON.stringify({ error: "AI provider error. Both backends failed." }), { 
-      status: 502, 
-      headers: jsonHeaders 
-    });
-
-  } catch (err) {
-    return new Response(JSON.stringify({ error: "Context processing error." }), { 
-      status: 500, 
-      headers: jsonHeaders 
-    });
+    const text = p.text(await r.json()).trim();
+    if (!text) return null;
+    p.remember(model);
+    return reply({ text, provider: p.name });
+  } catch (e) {
+    console.error(`[API] ${p.name} call failed:`, (e as Error).message);
+    return null;
   }
+}
+
+export default async function handler(req: Request) {
+  if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
+
+  const groqKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY || process.env.VITE_LLM_API_KEY;
+  if (!groqKey && !geminiKey) return reply({ error: "No AI API key configured." }, 500);
+
+  let body: { messages?: Msg[]; systemInstruction?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return reply({ error: "Send JSON." }, 400);
+  }
+  const messages = (Array.isArray(body.messages) ? body.messages : [])
+    .filter((m) => m && typeof m.content === "string" && typeof m.role === "string")
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+  const system = (messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n")
+    || body.systemInstruction || "You are Yaara, a friendly voice agent.") + FINAL_INSTRUCTION;
+  const convo = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
+  if (!convo.length) return reply({ error: "messages are required" }, 400);
+
+  const providers: Provider[] = [
+    {
+      name: "groq",
+      key: groqKey,
+      call: callGroq,
+      first: () => groqModel || GROQ_PREFERRED[0],
+      pick: async (k) => pickGroq(await groqModels(k)),
+      remember: (m) => { groqModel = m; },
+      text: (d) => (d as { choices?: { message?: { content?: string } }[] })?.choices?.[0]?.message?.content || "",
+    },
+    {
+      name: "gemini",
+      key: geminiKey,
+      call: callGemini,
+      first: () => geminiModel || GEMINI_PREFERRED[0],
+      pick: async (k) => pickGemini(await geminiModels(k)),
+      remember: (m) => { geminiModel = m; },
+      text: (d) => ((d as { candidates?: { content?: { parts?: { text?: string }[] } }[] })?.candidates?.[0]?.content?.parts || [])
+        .map((p) => p.text || "").join(""),
+    },
+  ];
+  let rateLimited = false;
+  for (const p of providers) {
+    const r = await tryProvider(p, system, convo);
+    if (r === "rate-limited") rateLimited = true;
+    else if (r) return r;
+  }
+  if (rateLimited) return reply({ error: "Rate limit reached. Please wait." }, 429);
+  return reply({ error: "AI provider error. Both backends failed." }, 502);
 }

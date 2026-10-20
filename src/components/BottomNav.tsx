@@ -1,15 +1,17 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Home, Mic, Music, Gamepad2, FileText, User, Heart, Sparkles } from "lucide-react";
+import { Home, Mic, Music, Gamepad2, FileText, User, Heart, Sparkles, Star } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const navItems = [
-  { path: "/", label: "Home", icon: Home, emoji: "🏠" },
-  { path: "/talk", label: "Talk with Yaara", icon: Mic, emoji: "💬" },
-  { path: "/music", label: "Music Hub", icon: Music, emoji: "🎵" },
-  { path: "/games", label: "Games Center", icon: Gamepad2, emoji: "🎮" },
-  { path: "/calls", label: "Call History", icon: FileText, emoji: "📞" },
-  { path: "/profile", label: "My Profile", icon: User, emoji: "👤" },
+  { path: "/", label: "Home", short: "Home", icon: Home, emoji: "🏠" },
+  { path: "/talk", label: "Talk with Yaara", short: "Talk", icon: Mic, emoji: "💬" },
+  { path: "/music", label: "Music Hub", short: "Music", icon: Music, emoji: "🎵" },
+  { path: "/games", label: "Games Center", short: "Games", icon: Gamepad2, emoji: "🎮" },
+  { path: "/calls", label: "Call History", short: "History", icon: FileText, emoji: "📞" },
+  { path: "/profile", label: "My Profile", short: "Profile", icon: User, emoji: "👤" },
+  // Desktop menu only: the phone bar has room for six. On phones it is on Home and Profile.
+  { path: "/review", label: "Rate Yaara", short: "Rate", icon: Star, emoji: "⭐", desktopOnly: true },
 ];
 
 const BottomNav = () => {
@@ -22,15 +24,18 @@ const BottomNav = () => {
       {/* ── MOBILE BOTTOM NAV ── */}
       <nav className="fixed bottom-0 left-0 right-0 z-50 px-2 pb-2 md:hidden">
         <div className="mx-auto flex h-20 w-full max-w-lg items-center justify-around rounded-3xl border border-white/15 bg-[#162038]/95 px-2 shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
-          {navItems.map(({ path, label, icon: Icon }) => {
+          {navItems.filter((item) => !item.desktopOnly).map(({ path, label, short, icon: Icon }) => {
             const active = location.pathname === path;
-            const shortLabel = label.split(" ")[0];
+            const shortLabel = short;
             return (
               <button
                 key={path}
+                type="button"
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
                 onClick={() => navigate(path)}
                 className={cn(
-                  "flex flex-col items-center justify-center gap-1.5 rounded-2xl px-2 py-2 transition-all duration-300",
+                  "flex min-h-12 min-w-11 flex-col items-center justify-center gap-1.5 rounded-2xl px-2 py-2 transition-all duration-300",
                   active ? "text-orange-400" : "text-white/40 hover:text-white/70"
                 )}
               >
@@ -98,10 +103,16 @@ const BottomNav = () => {
                 </div>
                 <div className="overflow-hidden">
                    <p className="text-sm font-bold text-white truncate">{user?.name || "Guest"}</p>
-                   <div className="flex items-center gap-1 mt-0.5">
-                      <Sparkles className="h-3 w-3 text-amber-400" />
-                      <p className="text-[11px] text-white/40 font-medium">Verified Account</p>
-                   </div>
+                   {user ? (
+                     <div className="flex items-center gap-1 mt-0.5">
+                        <Sparkles className="h-3 w-3 text-amber-400" />
+                        <p className="text-[11px] text-white/40 font-medium">+91 {user.mobile}</p>
+                     </div>
+                   ) : (
+                     <button type="button" onClick={() => navigate("/signin")} className="mt-0.5 text-[12px] font-bold text-amber-400 hover:text-amber-300">
+                       Sign in
+                     </button>
+                   )}
                 </div>
              </div>
           </div>

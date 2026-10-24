@@ -18,6 +18,8 @@ export default defineConfig(({ mode }) => ({
     apiDev(),
     VitePWA({
       registerType: "autoUpdate",
+      // main.tsx registers the worker itself, on the web only (not in the apps).
+      injectRegister: false,
       manifest: {
         name: "Hey Yaara",
         short_name: "Yaara",

@@ -41,9 +41,9 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
-        // The API must always reach the server: never answer it from the cache,
-        // and never answer it with the app's index.html.
-        navigateFallbackDenylist: [/^\/api\//],
+        // The API and the app download links must always reach the server:
+        // never answer them from the cache with the app's index.html.
+        navigateFallbackDenylist: [/^\/api\//, /^\/download\//],
       },
     })
   ].filter(Boolean),

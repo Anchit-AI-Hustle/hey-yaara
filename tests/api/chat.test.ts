@@ -136,3 +136,49 @@ describe("api/tts", () => {
     expect((await r.json()).fallback).toBe(true);
   });
 });
+
+describe("the native apps reach chat and tts", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.GROQ_API_KEY;
+    delete process.env.ELEVENLABS_API_KEY;
+  });
+
+  it("answers the preflight from the app's origin, and no other site's", async () => {
+    const handlers = { chat: (await import("../../api/chat")).default, tts: (await import("../../api/tts")).default };
+    for (const [path, handler] of Object.entries(handlers)) {
+      const pre = (origin: string) => new Request(`http://localhost/api/${path}`, {
+        method: "OPTIONS",
+        headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type" },
+      });
+      for (const origin of ["capacitor://localhost", "https://localhost"]) {
+        const r = await handler(pre(origin));
+        expect(r.status).toBe(204);
+        expect(r.headers.get("access-control-allow-origin")).toBe(origin);
+        expect(r.headers.get("access-control-allow-headers")).toMatch(/Content-Type/);
+      }
+      const other = await handler(pre("https://evil.example"));
+      expect(other.headers.get("access-control-allow-origin")).toBeNull();
+    }
+  });
+
+  it("puts the CORS header on the real answer, errors included", async () => {
+    process.env.GROQ_API_KEY = "test-groq";
+    fakeFetch(() => ok({ choices: [{ message: { content: "Namaste!" } }] }));
+    const chat = (await import("../../api/chat")).default;
+    const req = chatReq();
+    const fromApp = new Request(req, { headers: { "content-type": "application/json", origin: "capacitor://localhost" } });
+    const r = await chat(fromApp);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
+
+    const tts = (await import("../../api/tts")).default;
+    const t = await tts(new Request("http://localhost/api/tts", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://localhost" },
+      body: JSON.stringify({ text: "Namaste" }),
+    }));
+    expect(t.status).toBe(503); // no voice key here: the app falls back to the phone's voice
+    expect(t.headers.get("access-control-allow-origin")).toBe("https://localhost");
+  });
+});

@@ -69,7 +69,21 @@ create table if not exists yaara_reviews (
 `;
 
 export function connectionString(): string {
-  return process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || "";
+  const own = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
+  if (own) return own;
+  // Else the Postgres of the project's Supabase integration. Its pooler's
+  // certificate is not from a public CA, so sslmode=require keeps its libpq
+  // meaning there: encrypted, not verified.
+  const supabase = process.env.POSTGRES_URL;
+  if (!supabase) return "";
+  try {
+    const url = new URL(supabase);
+    if (!url.searchParams.has("sslmode")) url.searchParams.set("sslmode", "require");
+    url.searchParams.set("uselibpqcompat", "true");
+    return url.toString();
+  } catch {
+    return supabase;
+  }
 }
 
 let pool: pg.Pool | null = null;

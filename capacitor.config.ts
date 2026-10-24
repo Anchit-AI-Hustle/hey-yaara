@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'co.yaara.app',
-  appName: 'hey-yaara',
+  appName: 'Hey Yaara',
   webDir: 'dist'
 };
 

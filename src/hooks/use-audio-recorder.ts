@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { hasNativeSpeech } from "@/lib/native-speech";
 
 export function useAudioRecorder() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -12,6 +13,10 @@ export function useAudioRecorder() {
     try {
       setError(null);
       
+      // In the apps the phone's recognizer has the microphone; a second
+      // capture would cut it off, so calls there keep only the transcript.
+      if (hasNativeSpeech()) return;
+
       // Prevent double start
       if (isRecording) {
         console.warn("Already recording");

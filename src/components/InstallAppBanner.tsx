@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Download, Smartphone, X } from "lucide-react";
+import { isNativeApp } from "@/lib/api";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -10,6 +12,7 @@ const isStandaloneMode = () =>
   window.matchMedia("(display-mode: standalone)").matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
 
 const isIos = () => /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+const isAndroid = () => /android/i.test(window.navigator.userAgent);
 
 const InstallAppBanner = () => {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -38,7 +41,7 @@ const InstallAppBanner = () => {
   }, []);
 
   const content = useMemo(() => {
-    if (installed || dismissed) return null;
+    if (installed || dismissed || isNativeApp()) return null;
     if (deferredPrompt) {
       return {
         title: "Install Hey Yaara",
@@ -51,6 +54,14 @@ const InstallAppBanner = () => {
       return {
         title: "Install on iPhone or iPad",
         description: "Open Safari share menu and choose Add to Home Screen so Hey Yaara behaves like an app.",
+        actionLabel: null,
+      };
+    }
+
+    if (isAndroid()) {
+      return {
+        title: "Android app",
+        description: "Hey Yaara ka Android app download karke phone par install kijiye.",
         actionLabel: null,
       };
     }
@@ -84,11 +95,14 @@ const InstallAppBanner = () => {
             >
               {content.actionLabel}
             </button>
-          ) : (
+          ) : isIos() ? (
             <p className="mt-4 text-sm font-bold uppercase tracking-[0.22em] text-amber-200/80">
               Safari only
             </p>
-          )}
+          ) : null}
+          <Link to="/get" className="mt-3 inline-block text-base font-bold text-amber-200 underline underline-offset-4 hover:text-amber-50">
+            Android aur iPhone app download karein
+          </Link>
         </div>
         <button
           type="button"

@@ -14,6 +14,7 @@ import SignIn from "./pages/SignIn";
 import SignUp from "./pages/SignUp";
 import Profile from "./pages/Profile";
 import ReviewPage from "./pages/ReviewPage";
+import GetApp from "./pages/GetApp";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
 const queryClient = new QueryClient();
@@ -33,7 +34,7 @@ const App = () => (
           <div className="flex min-h-screen w-full overflow-x-hidden bg-background">
             <BottomNav />
             
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:ml-64 w-full max-w-full transition-all duration-300">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col md:ml-64 w-full max-w-full transition-all duration-300">
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/signup" element={<SignUp />} />
@@ -45,6 +46,7 @@ const App = () => (
                 <Route path="/music" element={<MusicPage />} />
                 <Route path="/games" element={<GamesPage />} />
                 <Route path="/review" element={<ReviewPage />} />
+                <Route path="/get" element={<GetApp />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </div>

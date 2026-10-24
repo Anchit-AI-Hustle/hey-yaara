@@ -1,0 +1,184 @@
+name: Native apps
+# Builds the Android APK and the iOS app from the web app (Capacitor), installs
+# and opens each one on an emulator / simulator, and on main publishes both to
+# a GitHub release. hey-yaara.anchit-tandon.com/get links to the newest one.
+on:
+  push:
+    branches: [main]
+    paths: [src/**, public/**, android/**, ios/**, index.html, package.json, package-lock.json, capacitor.config.ts, vite.config.ts, .github/workflows/native-apps.yml]
+  pull_request:
+    paths: [src/**, public/**, android/**, ios/**, index.html, package.json, package-lock.json, capacitor.config.ts, vite.config.ts, .github/workflows/native-apps.yml]
+  workflow_dispatch: {}
+
+concurrency:
+  group: native-apps-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash # -eo pipefail: a failing xcodebuild is not hidden by "| tail"
+
+env:
+  # The apps load their pages from the phone and call the hosted API here.
+  VITE_API_BASE: https://hey-yaara.anchit-tandon.com
+  VERSION_NAME: 1.0.${{ github.run_number }}
+  VERSION_CODE: ${{ github.run_number }}
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync android
+      # Updates install over the old app only when every build has the same
+      # signature, so releases want the release key from the secrets. Without
+      # it the runner's own throwaway debug key signs the APK. A key is never
+      # cached: pull requests run their own workflow code and could read it.
+      - name: Release key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: this APK has a one-off debug signature, so installing it over an earlier one needs an uninstall first. See README, Native apps."
+          fi
+      - name: Build the APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon assembleRelease -PversionCode=$VERSION_CODE -PversionName=$VERSION_NAME
+      - name: Check the APK
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" | head -3
+          "$BT/aapt2" dump badging "$APK" > badging.txt
+          grep -E "^package:|application-label:|uses-permission" badging.txt
+          grep -q "name='co.yaara.app'" badging.txt
+          grep -q "versionName='$VERSION_NAME'" badging.txt
+          grep -q "android.permission.RECORD_AUDIO" badging.txt
+          unzip -p "$APK" assets/capacitor.plugins.json | grep -q capacitor-speech-recognition
+          cp "$APK" hey-yaara.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: android-apk, path: hey-yaara.apk, if-no-files-found: error }
+
+  android-device-test:
+    needs: android
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with: { sparse-checkout: scripts }
+      - uses: actions/download-artifact@v4
+        with: { name: android-apk }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install and open the app on an Android 14 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          script: |
+            adb install -r hey-yaara.apk
+            adb shell pm grant co.yaara.app android.permission.RECORD_AUDIO
+            adb logcat -c
+            adb shell am start -W -n co.yaara.app/.MainActivity
+            sleep 25
+            adb shell pidof co.yaara.app
+            adb exec-out screencap -p > android-home.png
+            adb logcat -d > logcat.txt
+            ! grep -E "FATAL EXCEPTION|AndroidRuntime: Process: co.yaara.app" logcat.txt
+            grep -E "Capacitor" logcat.txt | head -20
+      # The page is inside a WebView, which Android's UI dump cannot see into:
+      # check the screenshot instead. A blank or error screen has a handful of
+      # colours; the home screen's gradients and text have hundreds.
+      - name: The app drew its home screen
+        run: |
+          COLOURS=$(python3 -I scripts/png-colours.py android-home.png)
+          echo "colours in the screenshot: $COLOURS"
+          test "$COLOURS" -gt 300
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: android-device-test, path: "android-home.png\nlogcat.txt", if-no-files-found: ignore }
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - run: npx cap sync ios
+      - name: Build for iPhone (unsigned)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/device \
+            MARKETING_VERSION=$VERSION_NAME CURRENT_PROJECT_VERSION=$VERSION_CODE \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -20
+      - name: Package the .ipa
+        run: |
+          APP=build/device/Build/Products/Release-iphoneos/App.app
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" -c "Print :CFBundleDisplayName" -c "Print :CFBundleShortVersionString" -c "Print :NSMicrophoneUsageDescription" "$APP/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist")" = "$VERSION_NAME"
+          test -f "$APP/public/index.html"
+          mkdir -p Payload && cp -R "$APP" Payload/
+          zip -qry hey-yaara-ios.ipa Payload
+          ls -la hey-yaara-ios.ipa
+      - name: Install and open the app on the iPhone simulator
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO build | tail -5
+          UDID=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin)['devices']; print(next(x['udid'] for r,l in d.items() if 'iOS' in r for x in l if x['name'].startswith('iPhone')))")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" build/sim/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl privacy "$UDID" grant microphone co.yaara.app || true
+          xcrun simctl launch "$UDID" co.yaara.app
+          sleep 25
+          xcrun simctl spawn "$UDID" launchctl list | grep co.yaara.app
+          xcrun simctl io "$UDID" screenshot ios-home.png
+      - uses: actions/upload-artifact@v4
+        with: { name: ios-ipa, path: hey-yaara-ios.ipa, if-no-files-found: error }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ios-simulator-test, path: ios-home.png, if-no-files-found: ignore }
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [android, android-device-test, ios]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: android-apk }
+      - uses: actions/download-artifact@v4
+        with: { name: ios-ipa }
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION_NAME" hey-yaara.apk hey-yaara-ios.ipa \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "Hey Yaara $VERSION_NAME" \
+            --notes "Android: install hey-yaara.apk. iPhone: hey-yaara-ios.ipa is unsigned; install it with AltStore or Sideloadly. Download page: https://hey-yaara.anchit-tandon.com/get"

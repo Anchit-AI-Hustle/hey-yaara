@@ -6,6 +6,7 @@
  */
 
 import { GEMINI_PREFERRED, GROQ_PREFERRED, isModelGone, pickGemini, pickGroq } from "./_lib/models.js";
+import { preflight, withCors } from "./_lib/cors.js";
 
 export const config = {
   runtime: "edge",
@@ -117,7 +118,7 @@ async function tryProvider(p: Provider, system: string, convo: Msg[]): Promise<R
   }
 }
 
-export default async function handler(req: Request) {
+async function handle(req: Request) {
   if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
 
   const groqKey = process.env.GROQ_API_KEY || process.env.VITE_GROQ_API_KEY;
@@ -169,4 +170,9 @@ export default async function handler(req: Request) {
   }
   if (rateLimited) return reply({ error: "Rate limit reached. Please wait." }, 429);
   return reply({ error: "AI provider error. Both backends failed." }, 502);
+}
+
+export default async function handler(req: Request) {
+  if (req.method === "OPTIONS") return preflight(req);
+  return withCors(req, await handle(req));
 }

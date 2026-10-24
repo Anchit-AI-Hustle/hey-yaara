@@ -78,6 +78,16 @@ function ensurePermission(): Promise<boolean> {
 
 // When the phone never reports that a stopped session ended, end it anyway.
 const STOP_TIMEOUT_MS = 2500;
+// A start the phone keeps refusing is given up after this many tries in a row.
+const MAX_START_FAILURES = 3;
+let startFailures = 0;
+
+// Refusals that no retry will change: shown to the person, like the browser's.
+function finalStartError(message: string): string | null {
+  if (/permission|denied/i.test(message)) return "not-allowed";
+  if (/unsupported locale|unavailable|not available|not supported/i.test(message)) return "service-not-allowed";
+  return null;
+}
 
 /** One recognition session at a time, like the browser object. */
 export class NativeRecognition {
@@ -105,7 +115,9 @@ export class NativeRecognition {
   }
 
   began(sessionId?: number) {
-    if (this.running && this.nativeSession === undefined) this.nativeSession = sessionId;
+    if (!this.running) return;
+    startFailures = 0;
+    if (this.nativeSession === undefined) this.nativeSession = sessionId;
   }
 
   heard(text: string) {
@@ -176,7 +188,16 @@ export class NativeRecognition {
       } catch (e) {
         if (!this.running) return;
         const message = (e as Error)?.message || "";
-        this.onerror?.({ error: /permission/i.test(message) ? "not-allowed" : "network" });
+        const final = finalStartError(message) || (++startFailures >= MAX_START_FAILURES ? "service-not-allowed" : null);
+        if (final) {
+          // No onend: the call shows the error instead of trying again.
+          startFailures = 0;
+          this.active = false;
+          this.running = false;
+          this.onerror?.({ error: final });
+          return;
+        }
+        this.onerror?.({ error: "network" });
         this.finish();
       }
     })();

@@ -225,4 +225,26 @@ describe("speech in the native apps", () => {
     expect(plugin.api.start).toHaveBeenCalledTimes(1);
     expect(events).toEqual([]);
   });
+  it("a recognizer the phone cannot start (iOS: unsupported or unavailable) is shown, not retried", async () => {
+    plugin.platform = "ios";
+    vi.resetModules();
+    ({ NativeRecognition } = await import("@/lib/native-speech"));
+    plugin.api.start.mockRejectedValueOnce(new Error("Speech recognizer is currently unavailable."));
+    const { rec, events } = listen();
+    rec.start();
+    await flush(); await flush(); await flush();
+    expect(events).toEqual(["error:service-not-allowed"]);
+  });
+
+  it("a start that keeps failing for another reason is retried, then given up after three tries", async () => {
+    plugin.api.start.mockRejectedValue(new Error("Speech recognition is already running."));
+    const { rec, events } = listen();
+    for (let i = 0; i < 3; i++) {
+      rec.start();
+      await flush(); await flush(); await flush();
+    }
+    expect(events).toEqual(["error:network", "end", "error:network", "end", "error:service-not-allowed"]);
+    plugin.api.start.mockReset();
+    plugin.api.start.mockImplementation(async () => ({}));
+  });
 });

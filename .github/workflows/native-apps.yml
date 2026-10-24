@@ -79,6 +79,8 @@ jobs:
     needs: android
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v7
+        with: { sparse-checkout: scripts }
       - uses: actions/download-artifact@v4
         with: { name: android-apk }
       - name: Enable KVM
@@ -109,8 +111,7 @@ jobs:
       # colours; the home screen's gradients and text have hundreds.
       - name: The app drew its home screen
         run: |
-          sudo apt-get install -y -qq imagemagick > /dev/null
-          COLOURS=$(convert android-home.png -format %k info:)
+          COLOURS=$(python3 -I scripts/png-colours.py android-home.png)
           echo "colours in the screenshot: $COLOURS"
           test "$COLOURS" -gt 300
       - uses: actions/upload-artifact@v4

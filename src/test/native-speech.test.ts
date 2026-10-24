@@ -247,4 +247,24 @@ describe("speech in the native apps", () => {
     plugin.api.start.mockReset();
     plugin.api.start.mockImplementation(async () => ({}));
   });
+  it("phone sessions that begin and then fail still count toward giving up", async () => {
+    plugin.api.start.mockImplementation(async () => {
+      plugin.fire("listeningState", { state: "startingListening", sessionId: 7 });
+      throw new Error("Unable to start audio engine: busy");
+    });
+    const { rec, events } = listen();
+    for (let i = 0; i < 3; i++) {
+      rec.start();
+      await flush(); await flush(); await flush();
+    }
+    expect(events).toEqual(["error:network", "end", "error:network", "end", "error:service-not-allowed"]);
+    plugin.api.start.mockReset();
+    plugin.api.start.mockImplementation(async () => ({}));
+    // after giving up, a new start takes the phone's next session as its own
+    rec.start();
+    await flush(); await flush(); await flush();
+    plugin.fire("listeningState", { state: "started", status: "started", sessionId: 8 });
+    plugin.fire("listeningState", { state: "stopped", status: "stopped", sessionId: 8 });
+    expect(events[events.length - 1]).toBe("end");
+  });
 });

@@ -115,9 +115,7 @@ export class NativeRecognition {
   }
 
   began(sessionId?: number) {
-    if (!this.running) return;
-    startFailures = 0;
-    if (this.nativeSession === undefined) this.nativeSession = sessionId;
+    if (this.running && this.nativeSession === undefined) this.nativeSession = sessionId;
   }
 
   heard(text: string) {
@@ -166,6 +164,7 @@ export class NativeRecognition {
     this.stopRequested = false;
     this.aborted = false;
     this.lastText = "";
+    this.nativeSession = undefined;
     void (async () => {
       await attachOnce();
       const ok = await ensurePermission();
@@ -185,6 +184,7 @@ export class NativeRecognition {
         // Android restarts listening after every pause; without muting, each
         // restart beeps.
         await SpeechRecognition.start({ language: this.lang, partialResults: true, popup: false, maxResults: 1, muteRecognizerBeep: true });
+        startFailures = 0; // only a start that succeeded resets the count
       } catch (e) {
         if (!this.running) return;
         const message = (e as Error)?.message || "";
@@ -194,6 +194,7 @@ export class NativeRecognition {
           startFailures = 0;
           this.active = false;
           this.running = false;
+          this.nativeSession = undefined;
           this.onerror?.({ error: final });
           return;
         }

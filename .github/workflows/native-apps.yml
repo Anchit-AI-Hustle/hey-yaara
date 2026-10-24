@@ -101,15 +101,21 @@ jobs:
             sleep 25
             adb shell pidof co.yaara.app
             adb exec-out screencap -p > android-home.png
-            adb shell uiautomator dump /sdcard/ui.xml >/dev/null && adb exec-out cat /sdcard/ui.xml > ui.xml || true
             adb logcat -d > logcat.txt
             ! grep -E "FATAL EXCEPTION|AndroidRuntime: Process: co.yaara.app" logcat.txt
             grep -E "Capacitor" logcat.txt | head -20
-            grep -o 'text="[^"]*Yaara[^"]*"' ui.xml | head -5
-            grep -q 'Yaara' ui.xml
+      # The page is inside a WebView, which Android's UI dump cannot see into:
+      # check the screenshot instead. A blank or error screen has a handful of
+      # colours; the home screen's gradients and text have hundreds.
+      - name: The app drew its home screen
+        run: |
+          sudo apt-get install -y -qq imagemagick > /dev/null
+          COLOURS=$(convert android-home.png -format %k info:)
+          echo "colours in the screenshot: $COLOURS"
+          test "$COLOURS" -gt 300
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: android-device-test, path: "android-home.png\nui.xml\nlogcat.txt", if-no-files-found: ignore }
+        with: { name: android-device-test, path: "android-home.png\nlogcat.txt", if-no-files-found: ignore }
 
   ios:
     runs-on: macos-latest

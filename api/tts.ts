@@ -7,6 +7,8 @@
  * with { fallback: true } and the app speaks with the phone's own voice.
  */
 
+import { preflight, withCors } from "./_lib/cors.js";
+
 export const config = {
   runtime: "edge",
 };
@@ -40,7 +42,7 @@ async function speak(key: string, voice: string, text: string, model: string | n
   });
 }
 
-export default async function handler(req: Request) {
+async function handle(req: Request) {
   if (req.method !== "POST") return reply({ error: "Method not allowed" }, 405);
   const key = process.env.ELEVENLABS_API_KEY;
   if (!key) return reply({ fallback: true, error: "No voice service configured." }, 503);
@@ -77,4 +79,9 @@ export default async function handler(req: Request) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+export default async function handler(req: Request) {
+  if (req.method === "OPTIONS") return preflight(req);
+  return withCors(req, await handle(req));
 }

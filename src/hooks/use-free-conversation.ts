@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { API_BASE } from "@/lib/api";
+import { NativeRecognition, hasNativeSpeech, speakNative, stopNativeSpeech } from "@/lib/native-speech";
 
 export type ConversationMode = "idle" | "listening" | "processing" | "speaking";
 export type TranscriptRole = "user" | "assistant";
@@ -266,7 +268,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
     const timeoutId = window.setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
     try {
       debugLog("📡 AI Bridge: Sending...");
-      const resp = await fetch("/api/chat", {
+      const resp = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages }),
@@ -351,7 +353,7 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
                 await new Promise(r => setTimeout(r, TTS_RETRY_DELAY_MS));
               }
 
-              const resp = await fetch("/api/tts", {
+              const resp = await fetch(`${API_BASE}/api/tts`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text, gender: pref.toUpperCase(), voiceId }),
@@ -416,6 +418,12 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
             debugLog("⚠️ Browser TTS Fallback");
 
             try {
+              if (hasNativeSpeech()) {
+                // The app's WebView has no speechSynthesis: the phone speaks.
+                await speakNative(text, { lang: "en-IN", rate: 0.96, pitch: pref === "female" ? 1.08 : 0.9 });
+                finalize();
+                return;
+              }
               window.speechSynthesis.cancel();
               const utt = new SpeechSynthesisUtterance(text);
               utt.lang = "en-IN";
@@ -588,7 +596,9 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
       webkitSpeechRecognition?: BrowserSpeechRecognitionCtor;
       SpeechRecognition?: BrowserSpeechRecognitionCtor;
     };
-    const Speech = speechWindow.webkitSpeechRecognition || speechWindow.SpeechRecognition;
+    const Speech = hasNativeSpeech()
+      ? (NativeRecognition as unknown as BrowserSpeechRecognitionCtor)
+      : speechWindow.webkitSpeechRecognition || speechWindow.SpeechRecognition;
     if (!Speech) {
       optionsRef.current.onError?.({ message: "Browser not supported (speech)" });
       sessionActiveRef.current = false;
@@ -703,7 +713,8 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
     finalUserSegmentsRef.current = [];
     interimUserTextRef.current = "";
     stopRecognition();
-    window.speechSynthesis.cancel();
+    window.speechSynthesis?.cancel();
+    stopNativeSpeech();
 
     // Stop any playing API audio
     if (audioRef.current) {

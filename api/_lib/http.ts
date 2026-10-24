@@ -3,21 +3,9 @@
 
 import { q } from "./db.js";
 import { tokenFrom, tokenHash } from "./pin.js";
+import { corsHeaders, preflight } from "./cors.js";
 
-// The Capacitor apps load from these origins. They send a Bearer token, never
-// a cookie, so no credentials are allowed cross-origin.
-const NATIVE_ORIGINS = new Set(["capacitor://localhost", "https://localhost", "http://localhost", "ionic://localhost"]);
-
-export function corsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get("origin") || "";
-  if (!NATIVE_ORIGINS.has(origin)) return {};
-  return {
-    "Access-Control-Allow-Origin": origin,
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, PATCH, PUT, DELETE, OPTIONS",
-    Vary: "Origin",
-  };
-}
+export { corsHeaders, preflight };
 
 export function json(req: Request, body: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -31,8 +19,6 @@ export function json(req: Request, body: unknown, status = 200, extra: Record<st
     },
   });
 }
-
-export const preflight = (req: Request) => new Response(null, { status: 204, headers: corsHeaders(req) });
 
 /**
  * JSON bodies only: a plain cross-site form cannot send this content type, so

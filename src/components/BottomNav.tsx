@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { Home, Mic, Music, Gamepad2, FileText, User, Heart, Sparkles, Star } from "lucide-react";
+import { Home, Mic, Music, Gamepad2, FileText, User, Heart, Sparkles, Star, Download } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { path: "/profile", label: "My Profile", short: "Profile", icon: User, emoji: "👤" },
   // Desktop menu only: the phone bar has room for six. On phones it is on Home and Profile.
   { path: "/review", label: "Rate Yaara", short: "Rate", icon: Star, emoji: "⭐", desktopOnly: true },
+  { path: "/get", label: "Get the App", short: "App", icon: Download, emoji: "📲", desktopOnly: true },
 ];
 
 const BottomNav = () => {

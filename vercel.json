@@ -2,6 +2,22 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "routes": [
     {
+      "src": "/download/android/?",
+      "status": 302,
+      "headers": {
+        "Location": "https://github.com/Anchit-AI-Hustle/hey-yaara/releases/latest/download/hey-yaara.apk",
+        "Cache-Control": "no-store"
+      }
+    },
+    {
+      "src": "/download/ios/?",
+      "status": 302,
+      "headers": {
+        "Location": "https://github.com/Anchit-AI-Hustle/hey-yaara/releases/latest/download/hey-yaara-ios.ipa",
+        "Cache-Control": "no-store"
+      }
+    },
+    {
       "src": "/api/(.*)",
       "dest": "/api/$1"
     },

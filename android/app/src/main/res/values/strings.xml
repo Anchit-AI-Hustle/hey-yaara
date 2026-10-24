@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">hey-yaara</string>
-    <string name="title_activity_main">hey-yaara</string>
+    <string name="app_name">Hey Yaara</string>
+    <string name="title_activity_main">Hey Yaara</string>
     <string name="package_name">co.yaara.app</string>
     <string name="custom_url_scheme">co.yaara.app</string>
 </resources>

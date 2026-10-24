@@ -62,7 +62,9 @@ base64 -w0 yaara-release.keystore   # the value of ANDROID_KEYSTORE_BASE64
 ```
 
 Keep the keystore safe: a lost key means people must uninstall to update. Until the
-secrets are set, CI signs with one debug key kept in its cache.
+secrets are set, each build is signed with the runner's one-off debug key, so a new
+version installs only after the old one is uninstalled. (A key is never cached in CI:
+pull requests run their own workflow code and could read it.)
 
 Icons and splash screens were made from `public/icon-512x512.png` with `@capacitor/assets`.
 

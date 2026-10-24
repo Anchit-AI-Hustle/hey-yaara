@@ -40,8 +40,9 @@ jobs:
       - run: npm run build
       - run: npx cap sync android
       # Updates install over the old app only when every build has the same
-      # signature: the release key from the secrets, or else one debug key kept
-      # in the cache.
+      # signature, so releases want the release key from the secrets. Without
+      # it the runner's own throwaway debug key signs the APK. A key is never
+      # cached: pull requests run their own workflow code and could read it.
       - name: Release key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -50,14 +51,8 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
             echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
           else
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: the APK is signed with the cached debug key. See README, Native apps."
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: this APK has a one-off debug signature, so installing it over an earlier one needs an uninstall first. See README, Native apps."
           fi
-      - name: Debug key (when there is no release key)
-        if: env.ANDROID_KEYSTORE_PATH == ''
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
       - name: Build the APK
         working-directory: android
         env:

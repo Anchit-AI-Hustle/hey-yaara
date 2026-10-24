@@ -6,11 +6,14 @@ const plugin = vi.hoisted(() => {
   return {
     handlers,
     permission: "granted" as "granted" | "denied" | "prompt",
+    available: true,
+    listenerCount: 0,
     fire: (name: string, e: unknown) => handlers[name]?.(e),
     api: {
-      addListener: async (name: string, fn: (e: unknown) => void) => { handlers[name] = fn; return { remove: async () => {} }; },
+      addListener: async (name: string, fn: (e: unknown) => void) => { plugin.listenerCount++; handlers[name] = fn; return { remove: async () => {} }; },
       checkPermissions: vi.fn(async () => ({ speechRecognition: plugin.permission })),
       requestPermissions: vi.fn(async () => ({ speechRecognition: plugin.permission })),
+      available: vi.fn(async () => ({ available: plugin.available })),
       start: vi.fn(async () => ({})),
       stop: vi.fn(async () => {}),
     },
@@ -21,7 +24,9 @@ vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true } 
 vi.mock("@capgo/capacitor-speech-recognition", () => ({ SpeechRecognition: plugin.api }));
 vi.mock("@capacitor-community/text-to-speech", () => ({ TextToSpeech: { speak: vi.fn(async () => {}), stop: vi.fn(async () => {}) } }));
 
-import { NativeRecognition, hasNativeSpeech } from "@/lib/native-speech";
+// The adapter keeps app-wide state (listeners, permission): each test loads a fresh copy.
+let NativeRecognition: typeof import("@/lib/native-speech").NativeRecognition;
+let hasNativeSpeech: typeof import("@/lib/native-speech").hasNativeSpeech;
 
 type Result = { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> };
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -38,9 +43,14 @@ function listen() {
 }
 
 describe("speech in the native apps", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     plugin.permission = "granted";
+    plugin.available = true;
+    plugin.listenerCount = 0;
     vi.clearAllMocks();
+    vi.useRealTimers();
+    vi.resetModules();
+    ({ NativeRecognition, hasNativeSpeech } = await import("@/lib/native-speech"));
   });
 
   it("is used in the apps", () => {
@@ -116,5 +126,67 @@ describe("speech in the native apps", () => {
     plugin.fire("error", { code: "ERROR_NETWORK", message: "Network", sessionId: 1 });
     plugin.fire("error", { code: "ERROR_INSUFFICIENT_PERMISSIONS", message: "Perm", sessionId: 1 });
     expect(events).toEqual(["error:no-speech", "error:network", "error:not-allowed"]);
+  });
+  it("a stop while the microphone prompt is still open ends the session without starting, and listening can resume", async () => {
+    let grant: (v: { speechRecognition: "granted" }) => void = () => {};
+    plugin.api.checkPermissions.mockImplementationOnce(async () => ({ speechRecognition: "prompt" }));
+    plugin.api.requestPermissions.mockImplementationOnce(() => new Promise((r) => { grant = r; }));
+    const { rec, events } = listen();
+    rec.start();
+    await flush();
+    rec.abort(); // Yaara starts her greeting while the prompt is up
+    rec.start(); // and listens again after it
+    grant({ speechRecognition: "granted" });
+    await flush(); await flush(); await flush();
+    expect(events).toEqual(["end"]);
+    expect(plugin.api.stop).not.toHaveBeenCalled();
+    expect(plugin.api.start).toHaveBeenCalledTimes(1); // the queued start, not the aborted one
+  });
+
+  it("a mute or hang-up cancels a queued restart, so the microphone stays off", async () => {
+    const { rec } = listen();
+    rec.start();
+    await flush();
+    rec.abort();
+    rec.start(); // queued while stopping
+    rec.abort(); // muted
+    plugin.fire("listeningState", { status: "stopped" });
+    await flush();
+    expect(plugin.api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it("ends a stopped session even when the phone never reports it", async () => {
+    vi.useFakeTimers();
+    const { rec, events } = listen();
+    rec.start();
+    await vi.advanceTimersByTimeAsync(0);
+    rec.abort();
+    expect(events).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2600);
+    expect(events).toEqual(["end"]);
+    vi.useRealTimers();
+  });
+
+  it("listens to the plugin once, however many calls are made, and only the current call hears", async () => {
+    const first = listen();
+    first.rec.start();
+    await flush();
+    plugin.fire("listeningState", { status: "stopped" });
+    const second = listen();
+    second.rec.start();
+    await flush();
+    plugin.fire("partialResults", { matches: ["dusri call"] });
+    expect(plugin.listenerCount).toBe(3);
+    expect(first.got).toEqual([]);
+    expect(second.got).toEqual([{ text: "dusri call", final: false }]);
+  });
+
+  it("a phone without a speech recognizer says so instead of retrying forever", async () => {
+    plugin.available = false;
+    const { rec, events } = listen();
+    rec.start();
+    await flush(); await flush();
+    expect(plugin.api.start).not.toHaveBeenCalled();
+    expect(events).toEqual(["error:service-not-allowed"]);
   });
 });

@@ -38,6 +38,42 @@ function webErrorName(code: string): string {
   return code.toLowerCase();
 }
 
+// One set of plugin listeners for the whole app, routed to the session that
+// is listening now (each call makes a new NativeRecognition).
+let current: NativeRecognition | null = null;
+let listeners: Promise<PluginListenerHandle[]> | null = null;
+let permission: Promise<boolean> | null = null;
+
+function attachOnce() {
+  if (!listeners) {
+    listeners = Promise.all([
+      SpeechRecognition.addListener("partialResults", (e) => current?.heard((e.accumulatedText || e.matches?.[0] || "").trim())),
+      SpeechRecognition.addListener("error", (e) => current?.failed(e.code || "")),
+      SpeechRecognition.addListener("listeningState", (e) => {
+        if (e.status === "stopped" || e.state === "stopped") current?.stopped();
+      }),
+    ]);
+  }
+  return listeners;
+}
+
+function ensurePermission(): Promise<boolean> {
+  if (!permission) {
+    permission = (async () => {
+      const now = await SpeechRecognition.checkPermissions();
+      if (now.speechRecognition === "granted") return true;
+      const asked = await SpeechRecognition.requestPermissions();
+      return asked.speechRecognition === "granted";
+    })().catch(() => false);
+    // A refusal is asked again on the next call, not remembered forever.
+    void permission.then((ok) => { if (!ok) permission = null; });
+  }
+  return permission;
+}
+
+// When the phone never reports that a stopped session ended, end it anyway.
+const STOP_TIMEOUT_MS = 2500;
+
 /** One recognition session at a time, like the browser object. */
 export class NativeRecognition {
   continuous = true;
@@ -48,57 +84,36 @@ export class NativeRecognition {
   onend: (() => void) | null = null;
   onspeechend: (() => void) | null = null;
 
-  private active = false;
+  private active = false; // from start() until onend
+  private running = false; // the phone's recognizer was started for this session
+  private stopRequested = false;
   private aborted = false;
   private pendingStart = false;
   private lastText = "";
-  private listeners: Promise<PluginListenerHandle[]> | null = null;
-  private permission: Promise<boolean> | null = null;
+  private stopTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private attach() {
-    if (!this.listeners) {
-      this.listeners = Promise.all([
-        SpeechRecognition.addListener("partialResults", (e) => {
-          if (!this.active || this.aborted) return;
-          const text = (e.accumulatedText || e.matches?.[0] || "").trim();
-          if (!text || text === this.lastText) return;
-          this.lastText = text;
-          this.onresult?.(resultEvent(text, false));
-        }),
-        SpeechRecognition.addListener("error", (e) => {
-          if (!this.active || this.aborted) return;
-          this.onerror?.({ error: webErrorName(e.code || "") });
-        }),
-        SpeechRecognition.addListener("listeningState", (e) => {
-          if (e.status === "stopped" || e.state === "stopped") this.finish();
-        }),
-      ]);
-    }
-    return this.listeners;
+  heard(text: string) {
+    if (!this.running || this.aborted || !text || text === this.lastText) return;
+    this.lastText = text;
+    this.onresult?.(resultEvent(text, false));
   }
 
-  private ensurePermission(): Promise<boolean> {
-    if (!this.permission) {
-      this.permission = (async () => {
-        const now = await SpeechRecognition.checkPermissions();
-        if (now.speechRecognition === "granted") return true;
-        const asked = await SpeechRecognition.requestPermissions();
-        return asked.speechRecognition === "granted";
-      })().catch(() => false);
-      // A refusal is asked again on the next call, not remembered forever.
-      void this.permission.then((ok) => { if (!ok) this.permission = null; });
-    }
-    return this.permission;
+  failed(code: string) {
+    if (!this.running || this.aborted) return;
+    this.onerror?.({ error: webErrorName(code) });
+  }
+
+  stopped() {
+    if (this.running) this.finish();
   }
 
   // The session ended (silence, results, stop or an error): the last words
   // become final unless it was aborted, then onend lets the caller restart.
   private finish() {
-    if (!this.active) {
-      if (this.pendingStart) { this.pendingStart = false; this.start(); }
-      return;
-    }
+    if (this.stopTimer) { clearTimeout(this.stopTimer); this.stopTimer = null; }
+    if (!this.active) return;
     this.active = false;
+    this.running = false;
     const text = this.lastText;
     this.lastText = "";
     if (text && !this.aborted) {
@@ -111,42 +126,54 @@ export class NativeRecognition {
 
   start() {
     if (this.active) {
-      // Still tearing down the last session: start again once it has stopped.
-      if (this.aborted) { this.pendingStart = true; return; }
+      // Still tearing down the last session: start again once it has ended.
+      if (this.stopRequested) { this.pendingStart = true; return; }
       throw new Error("recognition already started");
     }
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- the app-wide listeners follow the call listening now
+    current = this;
     this.active = true;
+    this.running = false;
+    this.stopRequested = false;
     this.aborted = false;
     this.lastText = "";
     void (async () => {
-      await this.attach();
-      if (!(await this.ensurePermission())) {
+      await attachOnce();
+      const ok = await ensurePermission();
+      const { available } = ok ? await SpeechRecognition.available().catch(() => ({ available: false })) : { available: false };
+      if (!ok || !available) {
+        // Like the browser: an error and no restart, so the call shows it.
         this.active = false;
-        this.onerror?.({ error: "not-allowed" });
+        this.onerror?.({ error: ok ? "service-not-allowed" : "not-allowed" });
         return;
       }
-      if (!this.active || this.aborted) return;
+      // Stopped while the permission prompt was open: nothing ever ran.
+      if (this.stopRequested) { this.finish(); return; }
+      this.running = true;
       try {
         await SpeechRecognition.start({ language: this.lang, partialResults: true, popup: false, maxResults: 1 });
       } catch (e) {
-        if (!this.active) return;
-        this.active = false;
+        if (!this.running) return;
         const message = (e as Error)?.message || "";
         this.onerror?.({ error: /permission/i.test(message) ? "not-allowed" : "network" });
-        this.onend?.();
+        this.finish();
       }
     })();
   }
 
   stop() {
-    if (!this.active) return;
+    this.pendingStart = false;
+    if (!this.active || this.stopRequested) return;
+    this.stopRequested = true;
+    // Before the recognizer runs, start() ends the session itself.
+    if (!this.running) return;
     void SpeechRecognition.stop().catch(() => this.finish());
+    this.stopTimer = setTimeout(() => this.finish(), STOP_TIMEOUT_MS);
   }
 
   abort() {
-    if (!this.active) return;
-    this.aborted = true;
-    void SpeechRecognition.stop().catch(() => this.finish());
+    if (this.active) this.aborted = true;
+    this.stop();
   }
 }
 

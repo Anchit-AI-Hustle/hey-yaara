@@ -23,7 +23,7 @@ const BottomNav = () => {
   return (
     <>
       {/* ── MOBILE BOTTOM NAV ── */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 px-2 pb-2 md:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-50 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:hidden">
         <div className="mx-auto flex h-20 w-full max-w-lg items-center justify-around rounded-3xl border border-white/15 bg-[#162038]/95 px-2 shadow-[0_8px_32px_rgba(0,0,0,0.5)] backdrop-blur-xl">
           {navItems.filter((item) => !item.desktopOnly).map(({ path, label, short, icon: Icon }) => {
             const active = location.pathname === path;

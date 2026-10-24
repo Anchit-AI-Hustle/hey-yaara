@@ -530,6 +530,10 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
         console.warn("[Chat] Empty reply from LLM");
         emit("listening");
         isProcessingRef.current = false;
+        // A fresh session: the phone's recognizer may have stopped meanwhile, or
+        // (iOS) still hold the words already sent.
+        stopRecognition();
+        if (sessionActiveRef.current) window.setTimeout(() => startRecognition(), 100);
         return;
       }
 
@@ -553,14 +557,15 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
       debugLog(`❌ ERROR: ${errMsg}`);
       optionsRef.current.onError?.(err instanceof Error ? err : { message: errMsg });
       emit("listening");
-      // Restart mic after error
+      // Restart mic after error, in a fresh session (see the empty reply above)
+      stopRecognition();
       if (sessionActiveRef.current) {
         window.setTimeout(() => startRecognition(), 100);
       }
     } finally {
       isProcessingRef.current = false;
     }
-  }, [callLLM, speak, emit, dispatch, startRecognition]);
+  }, [callLLM, speak, emit, dispatch, startRecognition, stopRecognition]);
 
   useEffect(() => {
     handleUserSpeechRef.current = async (text: string) => {

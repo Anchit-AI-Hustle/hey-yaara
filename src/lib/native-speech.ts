@@ -16,6 +16,9 @@ import { TextToSpeech } from "@capacitor-community/text-to-speech";
 const isNative = (() => {
   try { return Capacitor.isNativePlatform(); } catch { return false; }
 })();
+const isAndroid = (() => {
+  try { return Capacitor.getPlatform() === "android"; } catch { return false; }
+})();
 
 export const hasNativeSpeech = () => isNative;
 
@@ -33,8 +36,9 @@ const resultEvent = (transcript: string, isFinal: boolean): ResultEvent => ({
 function webErrorName(code: string): string {
   const c = code.toUpperCase();
   if (c.includes("PERMISSION")) return "not-allowed";
-  if (c.includes("NO_MATCH") || c.includes("SPEECH_TIMEOUT") || c.includes("TIMEOUT")) return "no-speech";
+  // Before TIMEOUT: NETWORK_TIMEOUT is a network error, not silence.
   if (c.includes("NETWORK") || c.includes("SERVER")) return "network";
+  if (c.includes("NO_MATCH") || c.includes("TIMEOUT")) return "no-speech";
   return code.toLowerCase();
 }
 
@@ -48,9 +52,10 @@ function attachOnce() {
   if (!listeners) {
     listeners = Promise.all([
       SpeechRecognition.addListener("partialResults", (e) => current?.heard((e.accumulatedText || e.matches?.[0] || "").trim())),
-      SpeechRecognition.addListener("error", (e) => current?.failed(e.code || "")),
+      SpeechRecognition.addListener("error", (e) => current?.failed(e.code || "", e.sessionId)),
       SpeechRecognition.addListener("listeningState", (e) => {
-        if (e.status === "stopped" || e.state === "stopped") current?.stopped();
+        if (e.state === "startingListening" || e.state === "started") current?.began(e.sessionId);
+        if (e.status === "stopped" || e.state === "stopped") current?.stopped(e.sessionId);
       }),
     ]);
   }
@@ -73,6 +78,16 @@ function ensurePermission(): Promise<boolean> {
 
 // When the phone never reports that a stopped session ended, end it anyway.
 const STOP_TIMEOUT_MS = 2500;
+// A start the phone keeps refusing is given up after this many tries in a row.
+const MAX_START_FAILURES = 3;
+let startFailures = 0;
+
+// Refusals that no retry will change: shown to the person, like the browser's.
+function finalStartError(message: string): string | null {
+  if (/permission|denied/i.test(message)) return "not-allowed";
+  if (/unsupported locale|unavailable|not available|not supported/i.test(message)) return "service-not-allowed";
+  return null;
+}
 
 /** One recognition session at a time, like the browser object. */
 export class NativeRecognition {
@@ -90,7 +105,18 @@ export class NativeRecognition {
   private aborted = false;
   private pendingStart = false;
   private lastText = "";
+  private nativeSession: number | undefined; // the phone's id for this session
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Events from an earlier phone session (one ended here by the stop timeout)
+  // must not end or disturb this one.
+  private mine(sessionId?: number) {
+    return sessionId === undefined || this.nativeSession === undefined || sessionId === this.nativeSession;
+  }
+
+  began(sessionId?: number) {
+    if (this.running && this.nativeSession === undefined) this.nativeSession = sessionId;
+  }
 
   heard(text: string) {
     if (!this.running || this.aborted || !text || text === this.lastText) return;
@@ -98,13 +124,13 @@ export class NativeRecognition {
     this.onresult?.(resultEvent(text, false));
   }
 
-  failed(code: string) {
-    if (!this.running || this.aborted) return;
+  failed(code: string, sessionId?: number) {
+    if (!this.running || this.aborted || !this.mine(sessionId)) return;
     this.onerror?.({ error: webErrorName(code) });
   }
 
-  stopped() {
-    if (this.running) this.finish();
+  stopped(sessionId?: number) {
+    if (this.running && this.mine(sessionId)) this.finish();
   }
 
   // The session ended (silence, results, stop or an error): the last words
@@ -114,6 +140,7 @@ export class NativeRecognition {
     if (!this.active) return;
     this.active = false;
     this.running = false;
+    this.nativeSession = undefined;
     const text = this.lastText;
     this.lastText = "";
     if (text && !this.aborted) {
@@ -137,10 +164,13 @@ export class NativeRecognition {
     this.stopRequested = false;
     this.aborted = false;
     this.lastText = "";
+    this.nativeSession = undefined;
     void (async () => {
       await attachOnce();
       const ok = await ensurePermission();
-      const { available } = ok ? await SpeechRecognition.available().catch(() => ({ available: false })) : { available: false };
+      // Android: is there a recognizer at all. (iOS checks the phone's own
+      // language, not ours; there start() reports a real problem itself.)
+      const { available } = ok && isAndroid ? await SpeechRecognition.available().catch(() => ({ available: false })) : { available: ok };
       if (!ok || !available) {
         // Like the browser: an error and no restart, so the call shows it.
         this.active = false;
@@ -151,11 +181,24 @@ export class NativeRecognition {
       if (this.stopRequested) { this.finish(); return; }
       this.running = true;
       try {
-        await SpeechRecognition.start({ language: this.lang, partialResults: true, popup: false, maxResults: 1 });
+        // Android restarts listening after every pause; without muting, each
+        // restart beeps.
+        await SpeechRecognition.start({ language: this.lang, partialResults: true, popup: false, maxResults: 1, muteRecognizerBeep: true });
+        startFailures = 0; // only a start that succeeded resets the count
       } catch (e) {
         if (!this.running) return;
         const message = (e as Error)?.message || "";
-        this.onerror?.({ error: /permission/i.test(message) ? "not-allowed" : "network" });
+        const final = finalStartError(message) || (++startFailures >= MAX_START_FAILURES ? "service-not-allowed" : null);
+        if (final) {
+          // No onend: the call shows the error instead of trying again.
+          startFailures = 0;
+          this.active = false;
+          this.running = false;
+          this.nativeSession = undefined;
+          this.onerror?.({ error: final });
+          return;
+        }
+        this.onerror?.({ error: "network" });
         this.finish();
       }
     })();

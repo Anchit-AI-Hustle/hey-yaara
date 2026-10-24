@@ -7,6 +7,7 @@ const plugin = vi.hoisted(() => {
     handlers,
     permission: "granted" as "granted" | "denied" | "prompt",
     available: true,
+    platform: "android" as "android" | "ios",
     listenerCount: 0,
     fire: (name: string, e: unknown) => handlers[name]?.(e),
     api: {
@@ -20,7 +21,7 @@ const plugin = vi.hoisted(() => {
   };
 });
 
-vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true } }));
+vi.mock("@capacitor/core", () => ({ Capacitor: { isNativePlatform: () => true, getPlatform: () => plugin.platform } }));
 vi.mock("@capgo/capacitor-speech-recognition", () => ({ SpeechRecognition: plugin.api }));
 vi.mock("@capacitor-community/text-to-speech", () => ({ TextToSpeech: { speak: vi.fn(async () => {}), stop: vi.fn(async () => {}) } }));
 
@@ -46,6 +47,7 @@ describe("speech in the native apps", () => {
   beforeEach(async () => {
     plugin.permission = "granted";
     plugin.available = true;
+    plugin.platform = "android";
     plugin.listenerCount = 0;
     vi.clearAllMocks();
     vi.useRealTimers();
@@ -62,7 +64,7 @@ describe("speech in the native apps", () => {
     rec.lang = "en-IN";
     rec.start();
     await flush();
-    expect(plugin.api.start).toHaveBeenCalledWith(expect.objectContaining({ language: "en-IN", partialResults: true, popup: false }));
+    expect(plugin.api.start).toHaveBeenCalledWith(expect.objectContaining({ language: "en-IN", partialResults: true, popup: false, muteRecognizerBeep: true }));
 
     plugin.fire("partialResults", { matches: ["namaste"] });
     plugin.fire("partialResults", { matches: ["namaste yaara"] });
@@ -125,7 +127,9 @@ describe("speech in the native apps", () => {
     plugin.fire("error", { code: "ERROR_NO_MATCH", message: "No match", sessionId: 1 });
     plugin.fire("error", { code: "ERROR_NETWORK", message: "Network", sessionId: 1 });
     plugin.fire("error", { code: "ERROR_INSUFFICIENT_PERMISSIONS", message: "Perm", sessionId: 1 });
-    expect(events).toEqual(["error:no-speech", "error:network", "error:not-allowed"]);
+    plugin.fire("error", { code: "ERROR_NETWORK_TIMEOUT", message: "Timeout", sessionId: 1 });
+    plugin.fire("error", { code: "ERROR_SPEECH_TIMEOUT", message: "Silence", sessionId: 1 });
+    expect(events).toEqual(["error:no-speech", "error:network", "error:not-allowed", "error:network", "error:no-speech"]);
   });
   it("a stop while the microphone prompt is still open ends the session without starting, and listening can resume", async () => {
     let grant: (v: { speechRecognition: "granted" }) => void = () => {};
@@ -188,5 +192,79 @@ describe("speech in the native apps", () => {
     await flush(); await flush();
     expect(plugin.api.start).not.toHaveBeenCalled();
     expect(events).toEqual(["error:service-not-allowed"]);
+  });
+  it("a late 'stopped' from an earlier phone session does not end the next one", async () => {
+    vi.useFakeTimers();
+    const { rec, events } = listen();
+    rec.start();
+    await vi.advanceTimersByTimeAsync(0);
+    plugin.fire("listeningState", { state: "started", status: "started", sessionId: 1 });
+    rec.abort();
+    rec.start(); // queued
+    await vi.advanceTimersByTimeAsync(2600); // the phone never said session 1 stopped: ended here, queued start runs
+    expect(events).toEqual(["end"]);
+    expect(plugin.api.start).toHaveBeenCalledTimes(2);
+    plugin.fire("listeningState", { state: "startingListening", sessionId: 2 });
+    plugin.fire("listeningState", { state: "stopped", status: "stopped", sessionId: 1 }); // late, from session 1
+    plugin.fire("error", { code: "ERROR_CLIENT", message: "late", sessionId: 1 });
+    expect(events).toEqual(["end"]);
+    plugin.fire("listeningState", { state: "stopped", status: "stopped", sessionId: 2 });
+    expect(events).toEqual(["end", "end"]);
+    vi.useRealTimers();
+  });
+
+  it("on iPhone it does not ask whether the phone's own language is supported, and still listens", async () => {
+    plugin.platform = "ios";
+    plugin.available = false; // iOS answers for the phone's language, not en-IN
+    vi.resetModules(); // the platform is read when the module loads
+    ({ NativeRecognition } = await import("@/lib/native-speech"));
+    const { rec, events } = listen();
+    rec.start();
+    await flush(); await flush();
+    expect(plugin.api.available).not.toHaveBeenCalled();
+    expect(plugin.api.start).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([]);
+  });
+  it("a recognizer the phone cannot start (iOS: unsupported or unavailable) is shown, not retried", async () => {
+    plugin.platform = "ios";
+    vi.resetModules();
+    ({ NativeRecognition } = await import("@/lib/native-speech"));
+    plugin.api.start.mockRejectedValueOnce(new Error("Speech recognizer is currently unavailable."));
+    const { rec, events } = listen();
+    rec.start();
+    await flush(); await flush(); await flush();
+    expect(events).toEqual(["error:service-not-allowed"]);
+  });
+
+  it("a start that keeps failing for another reason is retried, then given up after three tries", async () => {
+    plugin.api.start.mockRejectedValue(new Error("Speech recognition is already running."));
+    const { rec, events } = listen();
+    for (let i = 0; i < 3; i++) {
+      rec.start();
+      await flush(); await flush(); await flush();
+    }
+    expect(events).toEqual(["error:network", "end", "error:network", "end", "error:service-not-allowed"]);
+    plugin.api.start.mockReset();
+    plugin.api.start.mockImplementation(async () => ({}));
+  });
+  it("phone sessions that begin and then fail still count toward giving up", async () => {
+    plugin.api.start.mockImplementation(async () => {
+      plugin.fire("listeningState", { state: "startingListening", sessionId: 7 });
+      throw new Error("Unable to start audio engine: busy");
+    });
+    const { rec, events } = listen();
+    for (let i = 0; i < 3; i++) {
+      rec.start();
+      await flush(); await flush(); await flush();
+    }
+    expect(events).toEqual(["error:network", "end", "error:network", "end", "error:service-not-allowed"]);
+    plugin.api.start.mockReset();
+    plugin.api.start.mockImplementation(async () => ({}));
+    // after giving up, a new start takes the phone's next session as its own
+    rec.start();
+    await flush(); await flush(); await flush();
+    plugin.fire("listeningState", { state: "started", status: "started", sessionId: 8 });
+    plugin.fire("listeningState", { state: "stopped", status: "stopped", sessionId: 8 });
+    expect(events[events.length - 1]).toBe("end");
   });
 });

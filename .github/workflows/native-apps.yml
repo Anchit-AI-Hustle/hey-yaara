@@ -120,6 +120,7 @@ jobs:
 
   ios:
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -143,7 +144,10 @@ jobs:
           mkdir -p Payload && cp -R "$APP" Payload/
           zip -qry hey-yaara-ios.ipa Payload
           ls -la hey-yaara-ios.ipa
+      - uses: actions/upload-artifact@v4
+        with: { name: ios-ipa, path: hey-yaara-ios.ipa, if-no-files-found: error }
       - name: Install and open the app on the iPhone simulator
+        timeout-minutes: 20 # the simulator's first boot alone can take a few minutes
         run: |
           xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
@@ -157,8 +161,6 @@ jobs:
           sleep 25
           xcrun simctl spawn "$UDID" launchctl list | grep co.yaara.app
           xcrun simctl io "$UDID" screenshot ios-home.png
-      - uses: actions/upload-artifact@v4
-        with: { name: ios-ipa, path: hey-yaara-ios.ipa, if-no-files-found: error }
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: ios-simulator-test, path: ios-home.png, if-no-files-found: ignore }
@@ -178,7 +180,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v$VERSION_NAME" hey-yaara.apk hey-yaara-ios.ipa \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
-            --title "Hey Yaara $VERSION_NAME" \
-            --notes "Android: install hey-yaara.apk. iPhone: hey-yaara-ios.ipa is unsigned; install it with AltStore or Sideloadly. Download page: https://hey-yaara.anchit-tandon.com/get"
+          # A re-run of this run reuses its version: then replace the files.
+          if gh release view "v$VERSION_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "v$VERSION_NAME" hey-yaara.apk hey-yaara-ios.ipa --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "v$VERSION_NAME" --repo "$GITHUB_REPOSITORY" --latest
+          else
+            gh release create "v$VERSION_NAME" hey-yaara.apk hey-yaara-ios.ipa \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+              --title "Hey Yaara $VERSION_NAME" \
+              --notes "Android: install hey-yaara.apk. iPhone: hey-yaara-ios.ipa is unsigned; install it with AltStore or Sideloadly. Download page: https://hey-yaara.anchit-tandon.com/get"
+          fi

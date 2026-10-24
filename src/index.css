@@ -358,3 +358,9 @@
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
+
+/* iPhone notch and home bar (the app and Add to Home Screen): keep content
+   out from under them. 0 everywhere else. */
+body {
+  padding-top: env(safe-area-inset-top, 0px);
+}

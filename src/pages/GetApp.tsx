@@ -2,15 +2,16 @@
  * GetApp.tsx - /get: download the Hey Yaara app for Android or iPhone.
  *
  * Android gets the APK from the latest GitHub release. iPhone gets the App
- * Store link when there is one; until then Safari's Add to Home Screen, plus
- * the .ipa for people who sideload. The phone the page is opened on comes first.
+ * Store link when there is one; until then a profile that installs Hey Yaara
+ * on the Home Screen from Safari, or Add to Home Screen by hand. The phone the
+ * page is opened on comes first.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Apple, ArrowLeft, Check, Copy, Download, ExternalLink, Share, Smartphone, SquarePlus } from "lucide-react";
 import {
-  ANDROID_APK, IOS_IPA, IOS_STORE_URL, RELEASES_PAGE,
+  ANDROID_APK, IOS_PROFILE, IOS_STORE_URL, RELEASES_PAGE,
   detectPlatform, fetchLatestRelease, formatSize, latestAssetUrl,
   type LatestRelease, type Platform,
 } from "@/lib/app-downloads";
@@ -152,15 +153,29 @@ const GetApp = () => {
         </div>
       ) : (
         <>
+          <div className="mt-6">
+            <DownloadButton href={IOS_PROFILE} label="iPhone app install karein" detail="Safari mein, ek minute mein" primary={platform === "ios"} />
+          </div>
+          <Steps
+            items={[
+              "Yeh page iPhone ke Safari mein kholiye aur upar wala button dabaiye, phir “Allow”.",
+              "Settings kholiye aur sabse upar “Profile Downloaded” dabaiye.",
+              "“Install” dabaiye, passcode daaliye, phir dobara “Install”.",
+              "Home Screen par Hey Yaara ka icon aa jayega. Kholiye aur sign in kijiye.",
+            ]}
+          />
+          <p className="mt-4 text-sm leading-relaxed text-slate-500">
+            Har iPhone aur iPad par chalta hai, App Store ki zaroorat nahi, aur hamesha naya version khulta hai.
+          </p>
+
           <h3 className="mt-6 flex items-center gap-2 text-lg font-black text-amber-100">
-            <SquarePlus className="h-5 w-5" aria-hidden="true" /> Sabse aasaan: Home Screen par jodiye
+            <SquarePlus className="h-5 w-5" aria-hidden="true" /> Ya khud Home Screen par jodiye
           </h3>
           <Steps
             items={[
               "Yeh page iPhone ke Safari mein kholiye.",
               "Neeche Share button (chaukor se upar teer) dabaiye.",
               "“Add to Home Screen” chuniye, phir “Add”.",
-              "Home Screen par Hey Yaara ka icon aa jayega, app ki tarah khulega.",
             ]}
           />
           <p className="mt-3 flex items-center gap-2 text-sm text-slate-500">
@@ -168,26 +183,6 @@ const GetApp = () => {
           </p>
         </>
       )}
-
-      <div className="mt-6 border-t border-white/10 pt-6">
-        <h3 className="text-lg font-black text-amber-100">iOS app file (.ipa)</h3>
-        <p className="mt-1 text-base leading-relaxed text-slate-400">
-          {IOS_STORE_URL
-            ? "Sideload karne walon ke liye wahi app, file ke roop mein."
-            : "Poora native iPhone app. Apple ki shart ke kaaran yeh computer se AltStore ya Sideloadly ke zariye, apni Apple ID se install hota hai."}
-        </p>
-        <div className="mt-4">
-          {notYet || (release && !release.ios) ? (
-            <p className="rounded-2xl bg-white/5 px-5 py-4 text-base font-semibold text-amber-100">iOS file taiyaar ho rahi hai. Thodi der baad dobara dekhiye.</p>
-          ) : (
-            <DownloadButton
-              href={latestAssetUrl(IOS_IPA)}
-              label="iOS app (.ipa) download karein"
-              detail={release?.ios ? `Version ${release.version} · ${formatSize(release.ios.size)}` : undefined}
-            />
-          )}
-        </div>
-      </div>
     </section>
   );
 

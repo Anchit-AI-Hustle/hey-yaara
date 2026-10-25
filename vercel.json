@@ -22,6 +22,15 @@
       "dest": "/api/$1"
     },
     {
+      "src": "/install/(.+)\\.mobileconfig",
+      "headers": {
+        "Content-Type": "application/x-apple-aspen-config",
+        "Content-Disposition": "attachment; filename=\"hey-yaara.mobileconfig\"",
+        "Cache-Control": "no-cache"
+      },
+      "continue": true
+    },
+    {
       "handle": "filesystem"
     },
     {

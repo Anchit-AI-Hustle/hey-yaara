@@ -14,6 +14,13 @@ export const IOS_IPA = "hey-yaara-ios.ipa";
 
 export const latestAssetUrl = (name: string) => `${RELEASES_PAGE}/latest/download/${name}`;
 
+/**
+ * iPhone install from Safari: a profile holding one Web Clip, which puts Hey
+ * Yaara on the Home Screen as a full-screen app on any iPhone, no App Store or
+ * signing needed. Written by scripts/make-webclip.mjs.
+ */
+export const IOS_PROFILE = "/install/hey-yaara.mobileconfig";
+
 /** Set when the iPhone app is on the App Store or TestFlight. */
 export const IOS_STORE_URL: string = import.meta.env.VITE_IOS_STORE_URL || "";
 

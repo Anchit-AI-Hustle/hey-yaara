@@ -1,0 +1,61 @@
+name: CodeQL
+# Code scanning for every language in the repo. This replaces GitHub's
+# "default setup", whose Swift autobuild cannot build the iOS app: the Swift
+# package Capacitor generates (ios/App/CapApp-SPM/Package.swift) points into
+# node_modules, so the plugins only exist after npm ci and cap sync. Swift is
+# therefore built by hand here, the same way the Native apps workflow does.
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+  schedule:
+    - cron: "17 4 * * 1" # weekly, as the default setup did
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { language: actions, build-mode: none, runner: ubuntu-24.04 }
+          - { language: java-kotlin, build-mode: none, runner: ubuntu-24.04 }
+          - { language: javascript-typescript, build-mode: none, runner: ubuntu-24.04 }
+          - { language: swift, build-mode: manual, runner: macos-latest }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - if: matrix.language == 'swift'
+        uses: actions/setup-node@v7
+        with: { node-version: 22, cache: npm }
+      - name: Build the iOS app (unsigned, simulator)
+        if: matrix.language == 'swift'
+        run: |
+          npm ci
+          npm run build
+          npx cap sync ios
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/codeql \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            COMPILATION_CACHE_ENABLE_CACHING=NO SWIFT_ENABLE_COMPILE_CACHE=NO \
+            build | tail -20
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}

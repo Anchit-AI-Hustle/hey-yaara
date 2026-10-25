@@ -44,9 +44,18 @@ screen listens and speaks with the phone's own speech recognizer and voice
 
 - **Android**: `hey-yaara.apk`, opened on an Android 14 emulator in CI before release.
 - **iOS**: `hey-yaara-ios.ipa`, unsigned (no Apple developer account yet), opened on
-  the iPhone simulator in CI. People install it with AltStore or Sideloadly; the page
-  also shows Safari's Add to Home Screen. With an App Store or TestFlight build, set
-  `VITE_IOS_STORE_URL` in Vercel and the page leads with it.
+  the iPhone simulator in CI and kept in the release for sideloading.
+
+**iPhone install from `/get`.** An unsigned IPA cannot be installed from a phone, so
+the page offers `/install/hey-yaara.mobileconfig` instead: a profile holding one Web
+Clip. In Safari the person taps Allow, then Settings, Profile Downloaded, Install, and
+Hey Yaara opens full screen from its own Home Screen icon, on any iPhone or iPad, with
+no signing and no expiry. `scripts/make-webclip.mjs` writes it from
+`public/apple-touch-icon.png` (run it again after the icon changes), `vercel.json`
+serves it as `application/x-apple-aspen-config`, and
+`src/test/webclip-profile.test.ts` holds it to the live app and the icon. With an App
+Store or TestFlight build, set `VITE_IOS_STORE_URL` in Vercel and the page leads with
+it.
 
 On `main` both files go to a GitHub release `v1.0.<run>`; the page and the short links
 `/download/android` and `/download/ios` always point at the newest one.

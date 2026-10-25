@@ -115,7 +115,10 @@ try {
       await page.getByText("Version 1.0.9 · 4.6 MB").waitFor();
       assert((await page.locator("section h2").first().textContent()) === first, `${width}px: ${first} should come first`);
       const hrefs = await page.locator("a[href*='/releases/latest/download/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
-      assert(hrefs.some((h) => h.endsWith("/hey-yaara.apk")) && hrefs.some((h) => h.endsWith("/hey-yaara-ios.ipa")), "download links: " + hrefs);
+      assert(hrefs.some((h) => h.endsWith("/hey-yaara.apk")), "Android download link: " + hrefs);
+      // iPhone installs from Safari with a profile; the .ipa needs a computer, so it is not offered.
+      assert((await page.locator("a[href='/install/hey-yaara.mobileconfig']").count()) === 1, `${width}px: the iPhone install link`);
+      assert(!hrefs.some((h) => h.endsWith(".ipa")), "no .ipa link: " + hrefs);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(overflow <= 0, `${width}px scrolls sideways by ${overflow}px`);
       assert(errors.length === 0, errors.join("\n"));

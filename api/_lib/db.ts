@@ -69,7 +69,9 @@ create table if not exists yaara_reviews (
 `;
 
 export function connectionString(): string {
-  const own = process.env.DATABASE_URL || process.env.NEON_DATABASE_URL;
+  // The Vercel Neon integration names it DATABASE_URL, or STORAGE_DATABASE_URL
+  // when the store was connected with the "STORAGE" prefix.
+  const own = process.env.DATABASE_URL || process.env.STORAGE_DATABASE_URL || process.env.NEON_DATABASE_URL;
   if (own) return own;
   // Else the Postgres of the project's Supabase integration. Its pooler's
   // certificate is not from a public CA, so sslmode=require keeps its libpq

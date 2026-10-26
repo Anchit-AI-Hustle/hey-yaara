@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { connectionString } from "../../api/_lib/db";
 
-const KEYS = ["DATABASE_URL", "NEON_DATABASE_URL", "POSTGRES_URL"] as const;
+const KEYS = ["DATABASE_URL", "STORAGE_DATABASE_URL", "NEON_DATABASE_URL", "POSTGRES_URL"] as const;
 const saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 
 describe("database url", () => {
@@ -16,6 +16,13 @@ describe("database url", () => {
     expect(connectionString()).toBe("postgres://a@neon/db?sslmode=require");
     only({ NEON_DATABASE_URL: "postgres://n@neon/db", POSTGRES_URL: "postgres://b@supabase/db" });
     expect(connectionString()).toBe("postgres://n@neon/db");
+  });
+
+  it("reads the Neon store connected with the STORAGE prefix", () => {
+    only({ STORAGE_DATABASE_URL: "postgres://s@neon/db?sslmode=require", NEON_DATABASE_URL: "postgres://n@neon/db", POSTGRES_URL: "postgres://b@supabase/db" });
+    expect(connectionString()).toBe("postgres://s@neon/db?sslmode=require");
+    only({ DATABASE_URL: "postgres://a@neon/db", STORAGE_DATABASE_URL: "postgres://s@neon/db" });
+    expect(connectionString()).toBe("postgres://a@neon/db");
   });
 
   it("falls back to the Supabase POSTGRES_URL with libpq's sslmode=require", () => {

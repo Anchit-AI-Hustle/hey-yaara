@@ -26,7 +26,7 @@ on every request.
 
 | Variable | Needed for |
 | --- | --- |
-| `DATABASE_URL` | Neon Postgres, set by the Vercel Neon integration. Tables are created on first use (`db/schema.sql`). Without it the API uses `POSTGRES_URL` from the Supabase integration. |
+| `DATABASE_URL` | Neon Postgres, set by the Vercel Neon integration (`STORAGE_DATABASE_URL` when the store is connected with the "STORAGE" prefix; both work). Tables are created on first use (`db/schema.sql`). Without it the API uses `POSTGRES_URL` from the Supabase integration. |
 | `GROQ_API_KEY` | the conversation |
 | `GEMINI_API_KEY` | fallback for the conversation |
 | `ELEVENLABS_API_KEY` | Yaara's voice; optional |

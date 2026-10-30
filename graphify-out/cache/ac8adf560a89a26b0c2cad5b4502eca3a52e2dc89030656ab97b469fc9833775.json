@@ -1,1 +1,0 @@
-{"nodes": [{"id": "tailwind_config_ts", "label": "tailwind.config.ts", "file_type": "code", "source_file": "tailwind.config.ts", "source_location": "L1"}], "edges": [{"source": "tailwind_config_ts", "target": "tailwindcss", "relation": "imports_from", "confidence": "EXTRACTED", "source_file": "tailwind.config.ts", "source_location": "L1", "weight": 1.0}], "raw_calls": []}

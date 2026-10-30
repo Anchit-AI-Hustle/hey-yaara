@@ -72,7 +72,7 @@ jobs:
           grep -q "android.permission.RECORD_AUDIO" badging.txt
           unzip -p "$APK" assets/capacitor.plugins.json | grep -q capacitor-speech-recognition
           cp "$APK" hey-yaara.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: android-apk, path: hey-yaara.apk, if-no-files-found: error }
 
   android-device-test:
@@ -114,7 +114,7 @@ jobs:
           COLOURS=$(python3 -I scripts/png-colours.py android-home.png)
           echo "colours in the screenshot: $COLOURS"
           test "$COLOURS" -gt 300
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: android-device-test, path: "android-home.png\nlogcat.txt", if-no-files-found: ignore }
 
@@ -144,7 +144,7 @@ jobs:
           mkdir -p Payload && cp -R "$APP" Payload/
           zip -qry hey-yaara-ios.ipa Payload
           ls -la hey-yaara-ios.ipa
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with: { name: ios-ipa, path: hey-yaara-ios.ipa, if-no-files-found: error }
       - name: Install and open the app on the iPhone simulator
         timeout-minutes: 20 # the simulator's first boot alone can take a few minutes
@@ -161,7 +161,7 @@ jobs:
           sleep 25
           xcrun simctl spawn "$UDID" launchctl list | grep co.yaara.app
           xcrun simctl io "$UDID" screenshot ios-home.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with: { name: ios-simulator-test, path: ios-home.png, if-no-files-found: ignore }
 

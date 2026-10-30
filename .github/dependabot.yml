@@ -4,6 +4,24 @@ updates:
     directory: "/"
     schedule: { interval: "weekly" }
     open-pull-requests-limit: 5
+    # These only work as a set (react with react-dom and their types; vite with
+    # @vitejs/plugin-react-swc; date-fns with react-day-picker). A major bump of
+    # one alone broke npm ci in #37, #39 and #41, so majors are done by hand.
+    ignore:
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/react-dom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "date-fns"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "react-day-picker"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule: { interval: "monthly" }

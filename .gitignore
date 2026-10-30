@@ -28,3 +28,8 @@ dist-ssr
 *.sln
 *.sw?
 .vercel
+
+# Generated or for other tools: this project uses npm (package-lock.json)
+graphify-out/
+bun.lock
+bun.lockb

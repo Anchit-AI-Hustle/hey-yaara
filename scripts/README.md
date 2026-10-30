@@ -1,11 +1,7 @@
 # scripts/
 
-Vercel + environment setup helpers. Run individually as needed:
-
-| Script | Purpose |
+| Script | What |
 |---|---|
-| `set-env-vercel.sh` | Push the canonical `.env` vars into the Vercel project |
-| `setup-groq-vercel.sh` | One-time Groq key wiring (uses `vercel env add`) |
-| `setup-vercel-agent.sh` | Provision the wake-word agent function |
-
-These should eventually consolidate into one `setup-vercel.sh <subcommand>` runner.
+| `vite-api-dev.ts` | Serves the `api/` functions inside `npm run dev`, so the app and its API run on one port. |
+| `make-webclip.mjs` | Writes `public/install/hey-yaara.mobileconfig`, the iPhone install profile linked from `/get`. |
+| `png-colours.py` | Counts the colours in a screenshot; CI uses it to check the Android app drew its home screen. |

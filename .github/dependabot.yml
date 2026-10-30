@@ -4,6 +4,12 @@ updates:
     directory: "/"
     schedule: { interval: "weekly" }
     open-pull-requests-limit: 5
+    # One PR for all minor and patch bumps: separate PRs each rewrite
+    # package-lock.json, and merging several in a row left it out of sync
+    # with package.json (npm ci failed after #46-#50).
+    groups:
+      npm-minor-and-patch:
+        update-types: ["minor", "patch"]
     # These only work as a set (react with react-dom and their types; vite with
     # @vitejs/plugin-react-swc; date-fns with react-day-picker). A major bump of
     # one alone broke npm ci in #37, #39 and #41, so majors are done by hand.

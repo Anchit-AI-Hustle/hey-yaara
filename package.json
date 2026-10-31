@@ -22,7 +22,7 @@
     "@capacitor/core": "^8.3.0",
     "@capacitor/ios": "^8.3.0",
     "@capgo/capacitor-speech-recognition": "^8.4.4",
-    "@hookform/resolvers": "^5.4.0",
+    "@hookform/resolvers": "^6.0.2",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.17",
     "@radix-ui/react-aspect-ratio": "^1.1.15",

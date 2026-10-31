@@ -85,7 +85,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^18.3.29",
     "@types/react-dom": "^18.3.7",
-    "@vercel/node": "^5.7.1",
+    "@vercel/node": "^28.0.0",
     "@vitejs/plugin-react-swc": "^3.11.0",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.32.0",

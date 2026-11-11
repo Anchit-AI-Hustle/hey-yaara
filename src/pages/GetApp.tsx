@@ -9,10 +9,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Apple, ArrowLeft, Check, Copy, Download, ExternalLink, Share, Smartphone, SquarePlus } from "lucide-react";
+import { AlertTriangle, Apple, ArrowLeft, Check, Copy, Download, ExternalLink, Share, Smartphone, SquarePlus } from "lucide-react";
 import {
   ANDROID_APK, IOS_PROFILE, IOS_STORE_URL, RELEASES_PAGE,
-  detectPlatform, fetchLatestRelease, formatSize, latestAssetUrl,
+  detectBrowser, detectPlatform, fetchLatestRelease, formatSize, latestAssetUrl,
   type LatestRelease, type Platform,
 } from "@/lib/app-downloads";
 import { isNativeApp } from "@/lib/api";
@@ -29,6 +29,17 @@ const Steps = ({ items }: { items: string[] }) => (
       </li>
     ))}
   </ol>
+);
+
+const OpenElsewhere = ({ text, copied, onCopy }: { text: string; copied: boolean; onCopy: () => void }) => (
+  <div role="alert" className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4">
+    <p className="flex gap-2 text-base font-semibold leading-relaxed text-amber-100">
+      <AlertTriangle className="mt-1 h-5 w-5 flex-shrink-0" aria-hidden="true" /> <span>{text}</span>
+    </p>
+    <button type="button" onClick={onCopy} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-5 py-3 text-base font-bold text-amber-50 transition hover:bg-white/10">
+      {copied ? <Check className="h-5 w-5 text-emerald-400" aria-hidden="true" /> : <Copy className="h-5 w-5" aria-hidden="true" />} {copied ? "Link copy ho gaya" : "Is page ka link copy karein"}
+    </button>
+  </div>
 );
 
 const DownloadButton = ({ href, label, detail, primary }: { href: string; label: string; detail?: string; primary?: boolean }) => (
@@ -52,12 +63,15 @@ const DownloadButton = ({ href, label, detail, primary }: { href: string; label:
 const GetApp = () => {
   const navigate = useNavigate();
   const [platform, setPlatform] = useState<Platform>("other");
+  const [browser, setBrowser] = useState({ inApp: false, iosNotSafari: false });
   const [state, setState] = useState<ReleaseState>({ status: "loading" });
   const [copied, setCopied] = useState(false);
   const pageUrl = typeof window !== "undefined" ? `${window.location.origin}/get` : "/get";
 
   useEffect(() => {
     setPlatform(detectPlatform(navigator.userAgent, navigator.maxTouchPoints || 0));
+    // Inside the Hey Yaara app itself the links open in the phone's browser.
+    if (!isNativeApp()) setBrowser(detectBrowser(navigator.userAgent));
     const controller = new AbortController();
     fetchLatestRelease(controller.signal)
       .then((release) => setState({ status: "ready", release }))
@@ -99,6 +113,13 @@ const GetApp = () => {
         </div>
       </div>
 
+      {platform === "android" && browser.inApp && (
+        <OpenElsewhere
+          text="Yeh page kisi doosre app ke andar khula hai, wahan download aksar nahi hota. Upar ⋮ dabakar “Chrome mein kholiye” chuniye, ya link copy karke Chrome mein kholiye."
+          copied={copied}
+          onCopy={copyLink}
+        />
+      )}
       <div className="mt-6">
         {notYet ? (
           <p className="rounded-2xl bg-white/5 px-5 py-4 text-base font-semibold text-amber-100">Android app taiyaar ho raha hai. Thodi der baad yeh page dobara kholiye.</p>
@@ -153,6 +174,13 @@ const GetApp = () => {
         </div>
       ) : (
         <>
+          {platform === "ios" && (browser.inApp || browser.iosNotSafari) && (
+            <OpenElsewhere
+              text="iPhone par app sirf Safari se install hota hai. Link copy kijiye, Safari kholiye, upar address bar mein paste karke yeh page kholiye, phir button dabaiye."
+              copied={copied}
+              onCopy={copyLink}
+            />
+          )}
           <div className="mt-6">
             <DownloadButton href={IOS_PROFILE} label="iPhone app install karein" detail="Safari mein, ek minute mein" primary={platform === "ios"} />
           </div>

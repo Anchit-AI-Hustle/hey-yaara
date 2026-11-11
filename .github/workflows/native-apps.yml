@@ -188,5 +188,5 @@ jobs:
             gh release create "v$VERSION_NAME" hey-yaara.apk hey-yaara-ios.ipa \
               --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
               --title "Hey Yaara $VERSION_NAME" \
-              --notes "Android: install hey-yaara.apk. iPhone: hey-yaara-ios.ipa is unsigned; install it with AltStore or Sideloadly. Download page: https://hey-yaara.anchit-tandon.com/get"
+              --notes "Install on your phone: https://hey-yaara.anchit-tandon.com/get (Android downloads hey-yaara.apk; iPhone installs from Safari). hey-yaara-ios.ipa is unsigned, for AltStore or Sideloadly only."
           fi

@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { VitePWA } from "vite-plugin-pwa";
 import { apiDev } from "./scripts/vite-api-dev";
+import { NAVIGATE_FALLBACK_DENYLIST } from "./src/lib/sw-routes";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -12,6 +13,11 @@ export default defineConfig(({ mode }) => ({
     hmr: {
       overlay: false,
     },
+  },
+  // Vite 7 builds for Safari 16 / Chrome 107 by default. Keep Vite 5's older
+  // targets: /get promises iOS 15, and many family phones run old WebViews.
+  build: {
+    target: ["es2020", "edge88", "firefox78", "chrome87", "safari14"],
   },
   plugins: [
     react(),
@@ -43,9 +49,9 @@ export default defineConfig(({ mode }) => ({
       },
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
-        // The API and the app download links must always reach the server:
-        // never answer them from the cache with the app's index.html.
-        navigateFallbackDenylist: [/^\/api\//, /^\/download\//],
+        // The API, the app download links and the iPhone install profile must
+        // always reach the server, never the cached index.html.
+        navigateFallbackDenylist: NAVIGATE_FALLBACK_DENYLIST,
       },
     })
   ].filter(Boolean),

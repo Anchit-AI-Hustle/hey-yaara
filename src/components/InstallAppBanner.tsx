@@ -2,42 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Download, Smartphone, X } from "lucide-react";
 import { isNativeApp } from "@/lib/api";
-
-type BeforeInstallPromptEvent = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
-};
-
-const isStandaloneMode = () =>
-  window.matchMedia("(display-mode: standalone)").matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+import { canPromptInstall, isInstalledApp, onInstallPromptChange, promptInstall, wasInstalledNow } from "@/lib/install-prompt";
 
 const isIos = () => /iphone|ipad|ipod/i.test(window.navigator.userAgent);
 const isAndroid = () => /android/i.test(window.navigator.userAgent);
 
 const InstallAppBanner = () => {
-  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState(canPromptInstall());
   const [dismissed, setDismissed] = useState(false);
   const [installed, setInstalled] = useState(false);
 
   useEffect(() => {
-    setInstalled(isStandaloneMode());
-
-    const handleBeforeInstallPrompt = (event: Event) => {
-      event.preventDefault();
-      setDeferredPrompt(event as BeforeInstallPromptEvent);
-    };
-
-    const handleInstalled = () => {
-      setInstalled(true);
-      setDeferredPrompt(null);
-    };
-
-    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    window.addEventListener("appinstalled", handleInstalled);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-      window.removeEventListener("appinstalled", handleInstalled);
-    };
+    setInstalled(isInstalledApp());
+    // main.tsx keeps the browser's one-time install offer for every page.
+    return onInstallPromptChange(() => {
+      setDeferredPrompt(canPromptInstall());
+      if (wasInstalledNow()) setInstalled(true);
+    });
   }, []);
 
   const content = useMemo(() => {
@@ -72,10 +53,7 @@ const InstallAppBanner = () => {
   if (!content) return null;
 
   const handleInstall = async () => {
-    if (!deferredPrompt) return;
-    await deferredPrompt.prompt();
-    await deferredPrompt.userChoice.catch(() => null);
-    setDeferredPrompt(null);
+    if (await promptInstall()) setInstalled(true);
   };
 
   return (
@@ -101,7 +79,7 @@ const InstallAppBanner = () => {
             </p>
           ) : null}
           <Link to="/get" className="mt-3 inline-block text-base font-bold text-amber-200 underline underline-offset-4 hover:text-amber-50">
-            Android aur iPhone app download karein
+            Android, iPhone, Mac aur Windows app
           </Link>
         </div>
         <button

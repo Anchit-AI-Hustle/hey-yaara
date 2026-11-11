@@ -99,13 +99,14 @@ try {
     await ctx.close();
   });
 
-  await test("/get offers the Android and iPhone apps, the visitor's phone first, on phone, tablet and desktop", async () => {
+  await test("/get offers the Android, iPhone and computer apps, the visitor's device first, on phone, tablet and desktop", async () => {
     const release = { tag_name: "v1.0.9", published_at: "2026-10-24T10:00:00Z", assets: [{ name: "hey-yaara.apk", size: 4_800_000 }, { name: "hey-yaara-ios.ipa", size: 3_300_000 }] };
     const phones = {
       android: "Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Mobile Safari/537.36",
       ios: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
     };
-    for (const [width, height, ua, first] of [[390, 844, phones.android, "Android phone"], [820, 1180, phones.ios, "iPhone aur iPad"], [1440, 900, undefined, "Android phone"]]) {
+    const order = { android: ["Android phone", "iPhone aur iPad", "Mac aur Windows computer"], ios: ["iPhone aur iPad", "Android phone", "Mac aur Windows computer"], computer: ["Mac aur Windows computer", "Android phone", "iPhone aur iPad"] };
+    for (const [width, height, ua, expected] of [[390, 844, phones.android, order.android], [820, 1180, phones.ios, order.ios], [1440, 900, undefined, order.computer]]) {
       const ctx = await browser.newContext({ viewport: { width, height }, userAgent: ua });
       const page = await ctx.newPage();
       const errors = [];
@@ -113,7 +114,8 @@ try {
       await page.route("https://api.github.com/**", (r) => r.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(release) }));
       await page.goto(BASE + "/get");
       await page.getByText("Version 1.0.9 · 4.6 MB").waitFor();
-      assert((await page.locator("section h2").first().textContent()) === first, `${width}px: ${first} should come first`);
+      const titles = await page.locator("#android-title, #ios-title, #computer-title").allTextContents(); // DOM order; ignores the external widgets
+      assert(JSON.stringify(titles) === JSON.stringify(expected), `${width}px: cards ${JSON.stringify(titles)}, expected ${JSON.stringify(expected)}`);
       const hrefs = await page.locator("a[href*='/releases/latest/download/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
       assert(hrefs.some((h) => h.endsWith("/hey-yaara.apk")), "Android download link: " + hrefs);
       // iPhone installs from Safari with a profile; the .ipa needs a computer, so it is not offered.

@@ -9,12 +9,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, Apple, ArrowLeft, Check, Copy, Download, ExternalLink, Share, Smartphone, SquarePlus } from "lucide-react";
+import { AlertTriangle, Apple, ArrowLeft, Check, CheckCircle2, Copy, Download, ExternalLink, Laptop, Share, Smartphone, SquarePlus } from "lucide-react";
 import {
   ANDROID_APK, IOS_PROFILE, IOS_STORE_URL, RELEASES_PAGE,
-  detectBrowser, detectPlatform, fetchLatestRelease, formatSize, latestAssetUrl,
-  type LatestRelease, type Platform,
+  detectBrowser, detectDesktop, detectPlatform, fetchLatestRelease, formatSize, latestAssetUrl,
+  type DesktopBrowser, type DesktopOs, type LatestRelease, type Platform,
 } from "@/lib/app-downloads";
+import { canPromptInstall, isInstalledApp, onInstallPromptChange, promptInstall, wasInstalledNow } from "@/lib/install-prompt";
 import { isNativeApp } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -60,10 +61,43 @@ const DownloadButton = ({ href, label, detail, primary }: { href: string; label:
   </a>
 );
 
+/** How to install the web app on a computer, for browsers with no install button we can press. */
+function desktopSteps(os: DesktopOs, browser: DesktopBrowser): string[] {
+  if (browser === "chrome") {
+    return [
+      "Address bar ke daayein taraf “Install” icon (screen par neeche teer) dabaiye, phir “Install”.",
+      "Icon na dikhe to upar daayein ⋮ menu → “Cast, save and share” → “Install page as app…” chuniye.",
+      os === "mac" ? "Hey Yaara Launchpad aur Dock mein aa jayega." : "Hey Yaara Start menu aur desktop par aa jayega.",
+    ];
+  }
+  if (browser === "edge") {
+    return [
+      "Address bar mein “App available” icon dabaiye, phir “Install”.",
+      "Icon na dikhe to upar daayein … menu → “Apps” → “Install this site as an app” chuniye.",
+      os === "mac" ? "Hey Yaara Launchpad aur Dock mein aa jayega." : "Hey Yaara Start menu aur taskbar par pin ho sakta hai.",
+    ];
+  }
+  if (browser === "safari" && os === "mac") {
+    return [
+      "Upar menu bar mein “File” dabaiye, phir “Add to Dock…” (macOS Sonoma 14 ya naya).",
+      "“Add” dabaiye. Hey Yaara Dock aur Launchpad mein aa jayega.",
+      "Purana macOS hai to yeh page Chrome mein kholiye aur wahan se install kijiye.",
+    ];
+  }
+  return [
+    os === "mac" ? "Yeh page Chrome ya Safari mein kholiye." : "Yeh page Chrome ya Microsoft Edge mein kholiye.",
+    "Address bar ke daayein taraf “Install” icon dabaiye, phir “Install”.",
+    os === "windows" ? "Hey Yaara Start menu aur desktop par aa jayega." : "Hey Yaara apne app ki tarah alag window mein khulega.",
+  ];
+}
+
 const GetApp = () => {
   const navigate = useNavigate();
   const [platform, setPlatform] = useState<Platform>("other");
   const [browser, setBrowser] = useState({ inApp: false, iosNotSafari: false });
+  const [desktop, setDesktop] = useState<{ os: DesktopOs; browser: DesktopBrowser }>({ os: "other", browser: "other" });
+  const [canInstall, setCanInstall] = useState(canPromptInstall());
+  const [installedApp, setInstalledApp] = useState(false);
   const [state, setState] = useState<ReleaseState>({ status: "loading" });
   const [copied, setCopied] = useState(false);
   const pageUrl = typeof window !== "undefined" ? `${window.location.origin}/get` : "/get";
@@ -72,12 +106,16 @@ const GetApp = () => {
     setPlatform(detectPlatform(navigator.userAgent, navigator.maxTouchPoints || 0));
     // Inside the Hey Yaara app itself the links open in the phone's browser.
     if (!isNativeApp()) setBrowser(detectBrowser(navigator.userAgent));
+    setDesktop(detectDesktop(navigator.userAgent));
+    setInstalledApp(isInstalledApp());
+    const sync = () => { setCanInstall(canPromptInstall()); if (wasInstalledNow()) setInstalledApp(true); };
+    const stop = onInstallPromptChange(sync);
     const controller = new AbortController();
     fetchLatestRelease(controller.signal)
       .then((release) => setState({ status: "ready", release }))
       // GitHub's API is rate-limited per address: the download links work regardless.
       .catch(() => { if (!controller.signal.aborted) setState({ status: "unknown" }); });
-    return () => controller.abort();
+    return () => { controller.abort(); stop(); };
   }, []);
 
   const release = state.status === "ready" ? state.release : null;
@@ -214,6 +252,64 @@ const GetApp = () => {
     </section>
   );
 
+  const installOnComputer = async () => {
+    if (await promptInstall()) setInstalledApp(true);
+  };
+
+  const computerName = desktop.os === "mac" ? "Mac" : desktop.os === "windows" ? "Windows PC" : "computer";
+  const computer = (
+    <section
+      key="computer"
+      aria-labelledby="computer-title"
+      className={cn("rounded-[32px] p-6 md:p-8", platform === "other" ? "glass-card-premium border border-amber-500/30 lg:col-span-2" : "glass-card lg:col-span-2")}
+    >
+      <div className="flex items-center gap-4">
+        <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-2xl bg-violet-500/15 text-violet-300">
+          <Laptop className="h-7 w-7" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2 id="computer-title" className="text-2xl font-black text-amber-50">Mac aur Windows computer</h2>
+          <p className="text-base text-slate-400">Chrome, Edge ya Safari se, alag app ki tarah</p>
+        </div>
+      </div>
+
+      {installedApp ? (
+        <p className="mt-6 flex items-center gap-3 rounded-2xl bg-emerald-500/10 px-5 py-4 text-base font-semibold text-emerald-200">
+          <CheckCircle2 className="h-6 w-6 flex-shrink-0" aria-hidden="true" /> Hey Yaara is {computerName} par install hai. Dock, Launchpad ya Start menu se kholiye.
+        </p>
+      ) : (
+        <>
+          {platform === "other" && canInstall && (
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={() => void installOnComputer()}
+                className="flex min-h-14 w-full items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 text-center text-lg font-black text-white shadow-xl shadow-amber-500/20 transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-400"
+              >
+                <Download className="h-6 w-6 flex-shrink-0" aria-hidden="true" />
+                <span>
+                  {computerName} par install karein
+                  <span className="block text-sm font-semibold opacity-80">Ek click, koi file download nahi</span>
+                </span>
+              </button>
+            </div>
+          )}
+          {platform === "other" && desktop.browser === "firefox" && (
+            <p role="alert" className="mt-6 flex gap-2 rounded-2xl border border-amber-400/30 bg-amber-500/10 p-4 text-base font-semibold leading-relaxed text-amber-100">
+              <AlertTriangle className="mt-1 h-5 w-5 flex-shrink-0" aria-hidden="true" />
+              <span>Firefox apps install nahi karta. Yeh page {desktop.os === "mac" ? "Chrome ya Safari" : "Chrome ya Microsoft Edge"} mein kholiye.</span>
+            </p>
+          )}
+          <h3 className="mt-6 text-lg font-black text-amber-100">{canInstall && platform === "other" ? "Ya khud install kijiye" : "Install kaise karein"}</h3>
+          <Steps items={platform === "other" ? desktopSteps(desktop.os, desktop.browser) : desktopSteps("other", "other")} />
+          <p className="mt-4 text-sm leading-relaxed text-slate-500">
+            Koi file ya setup nahi: Hey Yaara apni window mein khulta hai, calls aur microphone ke saath, aur hamesha naya version chalta hai.
+          </p>
+        </>
+      )}
+    </section>
+  );
+
   return (
     <div className="min-h-screen pb-32">
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
@@ -229,7 +325,7 @@ const GetApp = () => {
           <img src="/icon-192x192.png" alt="" width={56} height={56} className="h-14 w-14 flex-shrink-0 rounded-2xl" />
           <div className="min-w-0">
             <h1 className="text-3xl font-black text-amber-50">Hey Yaara app</h1>
-            <p className="text-base text-slate-400 font-medium">Apne phone par Yaara ka app download kijiye.</p>
+            <p className="text-base text-slate-400 font-medium">Phone ya computer par Yaara ka app install kijiye.</p>
           </div>
         </header>
 
@@ -247,7 +343,7 @@ const GetApp = () => {
         )}
 
         <div className="grid gap-6 lg:grid-cols-2">
-          {platform === "ios" ? [ios, android] : [android, ios]}
+          {platform === "ios" ? [ios, android, computer] : platform === "android" ? [android, ios, computer] : [computer, android, ios]}
         </div>
 
         <p className="mt-8 text-center text-sm text-slate-500">

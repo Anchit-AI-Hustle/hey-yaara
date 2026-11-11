@@ -46,7 +46,22 @@ export function detectBrowser(userAgent: string): { inApp: boolean; iosNotSafari
   return { inApp, iosNotSafari };
 }
 
-export type ReleaseAsset ={ name: string; size: number; url: string };
+export type DesktopOs = "mac" | "windows" | "other";
+export type DesktopBrowser = "chrome" | "edge" | "safari" | "firefox" | "other";
+
+/** Which computer and browser, for the install steps shown on /get. */
+export function detectDesktop(userAgent: string): { os: DesktopOs; browser: DesktopBrowser } {
+  const os: DesktopOs = /Macintosh|Mac OS X/i.test(userAgent) ? "mac" : /Windows/i.test(userAgent) ? "windows" : "other";
+  let browser: DesktopBrowser = "other";
+  if (/Edg\//.test(userAgent)) browser = "edge";
+  else if (/Firefox\//.test(userAgent)) browser = "firefox";
+  else if (/OPR\/|SamsungBrowser|YaBrowser/.test(userAgent)) browser = "other";
+  else if (/Chrome\//.test(userAgent)) browser = "chrome";
+  else if (/Version\/[\d.]+.*Safari\//.test(userAgent)) browser = "safari";
+  return { os, browser };
+}
+
+export type ReleaseAsset = { name: string; size: number; url: string };
 export type LatestRelease = { version: string; publishedAt: string; android?: ReleaseAsset; ios?: ReleaseAsset };
 
 type GithubRelease = {

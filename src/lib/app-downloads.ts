@@ -34,7 +34,19 @@ export function detectPlatform(userAgent: string, maxTouchPoints = 0): Platform 
   return "other";
 }
 
-export type ReleaseAsset = { name: string; size: number; url: string };
+/**
+ * Where the page is open, beyond the phone. The iPhone install profile only
+ * installs from Safari, and app files often fail to download inside another
+ * app's built-in browser (Instagram, Facebook...), so the page says how to get
+ * to a real browser first.
+ */
+export function detectBrowser(userAgent: string): { inApp: boolean; iosNotSafari: boolean } {
+  const inApp = /FBAN|FBAV|FB_IAB|Instagram|Line\/|LinkedInApp|Snapchat|Twitter|musical_ly|; wv\)/i.test(userAgent);
+  const iosNotSafari = /CriOS|FxiOS|EdgiOS|OPiOS|GSA\/|DuckDuckGo\//i.test(userAgent);
+  return { inApp, iosNotSafari };
+}
+
+export type ReleaseAsset ={ name: string; size: number; url: string };
 export type LatestRelease = { version: string; publishedAt: string; android?: ReleaseAsset; ios?: ReleaseAsset };
 
 type GithubRelease = {

@@ -5,7 +5,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { Heart, Search, Play, Music, ArrowLeft, Star, Sparkles, Youtube } from "lucide-react";
+import { Heart, Search, Play, Music, ArrowLeft, Star, Sparkles, MonitorPlay } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { openExternalUrlInNewTab } from "@/lib/external-links";
 import { cn } from "@/lib/utils";
@@ -171,7 +171,7 @@ const MusicPage = () => {
               type="submit"
               className="flex items-center justify-center gap-3 rounded-[24px] bg-red-600 px-10 py-6 text-lg font-black text-white shadow-xl shadow-red-500/20 transition-all hover:bg-red-500 hover:-translate-y-1 active:scale-95"
             >
-              <Youtube className="h-7 w-7" />
+              <MonitorPlay className="h-7 w-7" />
               <span>Khojein</span>
             </button>
           </form>

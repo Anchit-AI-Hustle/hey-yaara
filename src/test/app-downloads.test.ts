@@ -1,11 +1,26 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ANDROID_APK, IOS_IPA, detectPlatform, formatSize, latestAssetUrl, parseRelease } from "@/lib/app-downloads";
+import { ANDROID_APK, IOS_IPA, IOS_PROFILE, detectBrowser, detectPlatform, formatSize, latestAssetUrl, parseRelease } from "@/lib/app-downloads";
+import { servedByAppShell } from "@/lib/sw-routes";
+
+const vercel = JSON.parse(readFileSync(join(__dirname, "..", "..", "vercel.json"), "utf8")) as {
+  routes: { src?: string; status?: number; headers?: Record<string, string> }[];
+};
+const redirect = (path: string) => {
+  const r = vercel.routes.find((x) => x.src && x.status && new RegExp(`^${x.src}$`).test(path));
+  return r && { status: r.status, location: r.headers?.Location };
+};
 
 const UA = {
   android: "Mozilla/5.0 (Linux; Android 14; SM-A546E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Mobile Safari/537.36",
   iphone: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
   ipadDesktop: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
   windows: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36",
+  iphoneChrome: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/128.0 Mobile/15E148 Safari/604.1",
+  iphoneGoogleApp: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) GSA/330.0 Mobile/15E148 Safari/604.1",
+  iphoneInstagram: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 340.0.0",
+  androidFacebook: "Mozilla/5.0 (Linux; Android 14; SM-A546E; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/128.0 Mobile Safari/537.36 [FBAN/EMA;FBLC/en_US;FBAV/420.0]",
 };
 
 describe("app downloads", () => {
@@ -41,5 +56,31 @@ describe("app downloads", () => {
     expect(parseRelease({ tag_name: "v2", assets: [] })).toMatchObject({ android: undefined, ios: undefined });
     expect(parseRelease({})).toBeNull();
     expect(formatSize(6_500_000)).toBe("6.2 MB");
+  });
+
+  it("knows when the browser cannot install: iPhone outside Safari, or inside another app", () => {
+    expect(detectBrowser(UA.iphone)).toEqual({ inApp: false, iosNotSafari: false });
+    expect(detectBrowser(UA.android)).toEqual({ inApp: false, iosNotSafari: false });
+    expect(detectBrowser(UA.iphoneChrome).iosNotSafari).toBe(true);
+    expect(detectBrowser(UA.iphoneGoogleApp).iosNotSafari).toBe(true);
+    expect(detectBrowser(UA.iphoneInstagram).inApp).toBe(true);
+    expect(detectBrowser(UA.androidFacebook).inApp).toBe(true);
+  });
+
+  it("short links send each phone to the file that installs on it", () => {
+    expect(redirect("/download/android")).toEqual({ status: 302, location: latestAssetUrl(ANDROID_APK) });
+    expect(redirect("/download/android/")).toEqual({ status: 302, location: latestAssetUrl(ANDROID_APK) });
+    // An iPhone cannot open an unsigned .ipa: its short link installs the profile.
+    expect(redirect("/download/ios")).toEqual({ status: 302, location: IOS_PROFILE });
+    expect(redirect("/download/ios-ipa")).toEqual({ status: 302, location: latestAssetUrl(IOS_IPA) });
+  });
+
+  it("the offline worker never answers a download with the app page", () => {
+    for (const path of [IOS_PROFILE, "/install/hey-yaara.mobileconfig?v=2", "/download/android", "/download/ios", "/download/ios-ipa", "/api/me", "/hey-yaara.apk"]) {
+      expect(servedByAppShell(path), path).toBe(false);
+    }
+    for (const path of ["/", "/get", "/call", "/history", "/get?from=banner", "/index.html"]) {
+      expect(servedByAppShell(path), path).toBe(true);
+    }
   });
 });

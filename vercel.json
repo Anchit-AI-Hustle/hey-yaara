@@ -13,6 +13,14 @@
       "src": "/download/ios/?",
       "status": 302,
       "headers": {
+        "Location": "/install/hey-yaara.mobileconfig",
+        "Cache-Control": "no-store"
+      }
+    },
+    {
+      "src": "/download/ios-ipa/?",
+      "status": 302,
+      "headers": {
         "Location": "https://github.com/Anchit-AI-Hustle/hey-yaara/releases/latest/download/hey-yaara-ios.ipa",
         "Cache-Control": "no-store"
       }

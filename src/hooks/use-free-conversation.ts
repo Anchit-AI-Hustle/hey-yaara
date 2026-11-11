@@ -293,9 +293,9 @@ export function useFreeConversation(options: UseFreeConversationOptions) {
       console.error("[AI] Bridge Error:", err);
       debugLog(`❌ Bridge Fail: ${err.message}`);
       if (err?.name === "AbortError") {
-        throw new Error("AI response timed out");
+        throw new Error("AI response timed out", { cause: caught });
       }
-      throw new Error(`Connectivity issues. ${err.message}`);
+      throw new Error(`Connectivity issues. ${err.message}`, { cause: caught });
     } finally {
       window.clearTimeout(timeoutId);
     }

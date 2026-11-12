@@ -57,8 +57,19 @@ serves it as `application/x-apple-aspen-config`, and
 Store or TestFlight build, set `VITE_IOS_STORE_URL` in Vercel and the page leads with
 it.
 
-On `main` both files go to a GitHub release `v1.0.<run>`; the page and the short links
-`/download/android` and `/download/ios` always point at the newest one.
+On `main` both files go to a GitHub release `v1.0.<run>`. Short links to share:
+`/download/android` (the newest APK), `/download/ios` (the iPhone install profile above,
+which is what installs on a phone) and `/download/ios-ipa` (the newest unsigned IPA,
+for AltStore or Sideloadly on a computer).
+
+The offline service worker must never answer these with the cached app page:
+`src/lib/sw-routes.ts` keeps `/download/`, `/install/` and any file path away from it,
+and `src/test/app-downloads.test.ts` holds it to that.
+
+**Mac and Windows from `/get`.** Computers install the web app from the browser, with
+no installer to sign: Chrome and Edge get a one-click install button
+(`src/lib/install-prompt.ts` keeps the browser's one-time offer from page load),
+Safari on macOS 14+ gets File, Add to Dock, and Firefox is told to use another browser.
 
 **Android signing.** Updates install over the old app only when every APK has the same
 key. Make one once and add it to the repository's Actions secrets

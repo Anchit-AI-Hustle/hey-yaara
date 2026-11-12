@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ANDROID_APK, IOS_IPA, IOS_PROFILE, detectBrowser, detectDesktop, detectPlatform, formatSize, latestAssetUrl, parseRelease } from "@/lib/app-downloads";
+import { ANDROID_APK, IOS_INSTALL_LINK, IOS_IPA, IOS_PROFILE, detectBrowser, detectDesktop, detectPlatform, formatSize, latestAssetUrl, parseRelease } from "@/lib/app-downloads";
 import { servedByAppShell } from "@/lib/sw-routes";
 
 const vercel = JSON.parse(readFileSync(join(__dirname, "..", "..", "vercel.json"), "utf8")) as {
@@ -70,9 +70,25 @@ describe("app downloads", () => {
   it("short links send each phone to the file that installs on it", () => {
     expect(redirect("/download/android")).toEqual({ status: 302, location: latestAssetUrl(ANDROID_APK) });
     expect(redirect("/download/android/")).toEqual({ status: 302, location: latestAssetUrl(ANDROID_APK) });
-    // An iPhone cannot open an unsigned .ipa: its short link installs the profile.
-    expect(redirect("/download/ios")).toEqual({ status: 302, location: IOS_PROFILE });
     expect(redirect("/download/ios-ipa")).toEqual({ status: 302, location: latestAssetUrl(IOS_IPA) });
+  });
+
+  it("the iPhone button gets the profile itself from a path no service worker ever caught", () => {
+    // Served in place, not redirected: a phone still on an old worker (which
+    // only left /api/ and /download/ alone) must install on the first tap.
+    expect(IOS_INSTALL_LINK).toBe("/download/ios");
+    const oldWorker = [/^\/api\//, /^\/download\//];
+    expect(oldWorker.some((re) => re.test(IOS_INSTALL_LINK))).toBe(true);
+    const route = vercel.routes.find((r) => r.src && new RegExp(`^${r.src}$`).test(IOS_INSTALL_LINK)) as { dest?: string; status?: number; headers?: Record<string, string> };
+    expect(route.status).toBeUndefined();
+    expect(route.dest).toBe(IOS_PROFILE);
+    expect(route.headers?.["Content-Type"]).toBe("application/x-apple-aspen-config");
+    expect(route.headers?.["Content-Disposition"]).toContain("attachment");
+  });
+
+  it("the service worker script is never cached, so phones get the new one on the next visit", () => {
+    const route = vercel.routes.find((r) => r.src === "/sw.js");
+    expect(route?.headers?.["Cache-Control"]).toBe("no-cache");
   });
 
   it("the offline worker never answers a download with the app page", () => {

@@ -119,7 +119,7 @@ try {
       const hrefs = await page.locator("a[href*='/releases/latest/download/']").evaluateAll((as) => as.map((a) => a.getAttribute("href")));
       assert(hrefs.some((h) => h.endsWith("/hey-yaara.apk")), "Android download link: " + hrefs);
       // iPhone installs from Safari with a profile; the .ipa needs a computer, so it is not offered.
-      assert((await page.locator("a[href='/install/hey-yaara.mobileconfig']").count()) === 1, `${width}px: the iPhone install link`);
+      assert((await page.locator("a[href='/download/ios']").count()) === 1, `${width}px: the iPhone install link`);
       assert(!hrefs.some((h) => h.endsWith(".ipa")), "no .ipa link: " + hrefs);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
       assert(overflow <= 0, `${width}px scrolls sideways by ${overflow}px`);

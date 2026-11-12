@@ -59,10 +59,14 @@ it.
 
 On `main` both files go to a GitHub release `v1.0.<run>`. Short links to share:
 `/download/android` (the newest APK), `/download/ios` (the iPhone install profile above,
-which is what installs on a phone) and `/download/ios-ipa` (the newest unsigned IPA,
+served there directly; the iPhone button links here because no service worker this site
+ever shipped answers `/download/`, so it installs on the first tap even on a phone still
+running an old one) and `/download/ios-ipa` (the newest unsigned IPA,
 for AltStore or Sideloadly on a computer).
 
-The offline service worker must never answer these with the cached app page:
+`/sw.js` is sent with `Cache-Control: no-cache` (Cloudflare otherwise rewrites it to a
+4-hour cache), so phones pick up a new worker on their next visit. The offline service
+worker must never answer these with the cached app page:
 `src/lib/sw-routes.ts` keeps `/download/`, `/install/` and any file path away from it,
 and `src/test/app-downloads.test.ts` holds it to that.
 

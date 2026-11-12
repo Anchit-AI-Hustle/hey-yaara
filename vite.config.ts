@@ -52,6 +52,12 @@ export default defineConfig(({ mode }) => ({
         // The API, the app download links and the iPhone install profile must
         // always reach the server, never the cached index.html.
         navigateFallbackDenylist: NAVIGATE_FALLBACK_DENYLIST,
+        // main.tsx registers /sw.js itself, so nothing ever sends the plugin's
+        // SKIP_WAITING message: without these a new worker waits until every
+        // tab of the site is closed, which on an iPhone can be never, and the
+        // old worker keeps serving the old page (and its old bugs).
+        skipWaiting: true,
+        clientsClaim: true,
       },
     })
   ].filter(Boolean),

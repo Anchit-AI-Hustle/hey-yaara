@@ -21,6 +21,14 @@ export const latestAssetUrl = (name: string) => `${RELEASES_PAGE}/latest/downloa
  */
 export const IOS_PROFILE = "/install/hey-yaara.mobileconfig";
 
+/**
+ * What the iPhone button links to: vercel.json serves the same profile here
+ * directly (no redirect). Every service worker this site has ever shipped
+ * leaves /download/ to the server, so the first tap installs even on a phone
+ * still running an old worker, which sends /install/ to "Page not found".
+ */
+export const IOS_INSTALL_LINK = "/download/ios";
+
 /** Set when the iPhone app is on the App Store or TestFlight. */
 export const IOS_STORE_URL: string = import.meta.env.VITE_IOS_STORE_URL || "";
 

@@ -11,11 +11,19 @@
     },
     {
       "src": "/download/ios/?",
-      "status": 302,
+      "dest": "/install/hey-yaara.mobileconfig",
       "headers": {
-        "Location": "/install/hey-yaara.mobileconfig",
-        "Cache-Control": "no-store"
+        "Content-Type": "application/x-apple-aspen-config",
+        "Content-Disposition": "attachment; filename=\"hey-yaara.mobileconfig\"",
+        "Cache-Control": "no-cache"
       }
+    },
+    {
+      "src": "/sw.js",
+      "headers": {
+        "Cache-Control": "no-cache"
+      },
+      "continue": true
     },
     {
       "src": "/download/ios-ipa/?",

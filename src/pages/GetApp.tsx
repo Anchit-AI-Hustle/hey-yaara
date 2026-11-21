@@ -11,7 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Apple, ArrowLeft, Check, CheckCircle2, Copy, Download, ExternalLink, Laptop, Share, Smartphone, SquarePlus } from "lucide-react";
 import {
-  ANDROID_APK, IOS_PROFILE, IOS_STORE_URL, RELEASES_PAGE,
+  ANDROID_APK, IOS_INSTALL_LINK, IOS_STORE_URL, RELEASES_PAGE,
   detectBrowser, detectDesktop, detectPlatform, fetchLatestRelease, formatSize, latestAssetUrl,
   type DesktopBrowser, type DesktopOs, type LatestRelease, type Platform,
 } from "@/lib/app-downloads";
@@ -201,7 +201,11 @@ const GetApp = () => {
         </div>
       </div>
 
-      {IOS_STORE_URL ? (
+      {platform === "ios" && installedApp ? (
+        <p className="mt-6 flex items-center gap-3 rounded-2xl bg-emerald-500/10 px-5 py-4 text-base font-semibold text-emerald-200">
+          <CheckCircle2 className="h-6 w-6 flex-shrink-0" aria-hidden="true" /> Hey Yaara aapke iPhone par install hai. Home Screen par uske icon se kholiye.
+        </p>
+      ) : IOS_STORE_URL ? (
         <div className="mt-6">
           <a
             href={IOS_STORE_URL}
@@ -220,7 +224,7 @@ const GetApp = () => {
             />
           )}
           <div className="mt-6">
-            <DownloadButton href={IOS_PROFILE} label="iPhone app install karein" detail="Safari mein, ek minute mein" primary={platform === "ios"} />
+            <DownloadButton href={IOS_INSTALL_LINK} label="iPhone app install karein" detail="Safari mein, ek minute mein" primary={platform === "ios"} />
           </div>
           <Steps
             items={[

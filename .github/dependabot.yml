@@ -10,40 +10,12 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: ["minor", "patch"]
-    # These only work as a set (react with react-dom and their types; vite with
-    # @vitejs/plugin-react-swc; date-fns with react-day-picker). A major bump of
-    # one alone broke npm ci in #37, #39 and #41, so majors are done by hand.
+    # Major versions are done by hand, never by Dependabot. Merged one at a
+    # time they broke npm ci or the build again and again (#37-#41, #57-#61,
+    # #65-#69: eslint 10, vitest 5, lucide 1, tailwind 4, recharts 3...) and
+    # each time no Android or iPhone app was built until someone noticed.
     ignore:
-      - dependency-name: "react"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "react-dom"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@types/react"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@types/react-dom"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "vite"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "date-fns"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "react-day-picker"
-        update-types: ["version-update:semver-major"]
-      # Same story in #57-#61: @eslint/js 10 without eslint 10, vitest 5 without
-      # vite 6+, lucide-react 1 dropping icons, react-hooks 7 adding compiler
-      # rules. Each merged alone, npm ci failed, and no app was built for 11 days.
-      - dependency-name: "eslint"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@eslint/js"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "eslint-plugin-react-hooks"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "vitest"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "@vitejs/plugin-react-swc"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "vite-plugin-pwa"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "lucide-react"
+      - dependency-name: "*"
         update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
